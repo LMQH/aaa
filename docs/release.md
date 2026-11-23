@@ -1,6 +1,6 @@
 # 构建与发布
 
-状态：**发版门代码侧就绪，尚未解禁**（2026-11-23）。tag 由 `scripts/release.py` 创建，CI 不创建 tag；release workflow 只允许手动 dispatch + `confirm=RELEASE` + `environment: release` 审批；`SHA256SUMS` 已接入安装校验。远程建立后配置 tag protection 与环境 required reviewers，再解禁。
+状态：**发版门已就绪，尚未发版**（2026-11-23）。tag 由 `scripts/release.py` 创建，CI 不创建 tag；release workflow 只允许手动 dispatch + `confirm=RELEASE` + `environment: release` 审批；`SHA256SUMS` 已接入安装校验；GitHub 已配置 `main`/`v*` ruleset 与 environment required reviewers。
 
 ## 一、定位与边界
 
@@ -32,7 +32,6 @@
 scripts/
   release.py         # 唯一入口：preflight / tag / verify
   install.sh         # POSIX 安装：macOS / Ubuntu / Arch / WSL
-  install.ps1        # Windows 安装
 .aaa/
   skills/release/    # Agent 操作规程（SKILL.md）
 .github/workflows/
@@ -93,8 +92,7 @@ curl -fsSL https://github.com/LMQH/aaa/releases/latest/download/install.sh | sh
 | `build` | preflight | `environment: release` 审批；`uv build`；版本等于 tag；生成 `SHA256SUMS`；ubuntu 安装冒烟 |
 | `smoke` | build | matrix：`ubuntu-latest` / `macos-latest`；`install.sh --wheel` 校验并安装，断言 `aaa --version` |
 | `draft-release` | smoke | 建草稿 Release 上传资产；不自动发布 |
-| `publish-pypi` / `publish-testpypi` | build | 后续批次启用：`uv publish`，OIDC Trusted Publishing（testPyPI 可用 token 凭据） |
-| `e2e`（可选） | 手动 | `workflow_dispatch` 且勾选 `run_e2e` 时执行，使用 repository secret |
+PyPI/testPyPI 发布与自动 e2e job 尚未实现，后续批次再加。
 
 通用约束：`permissions: {}` 起步按需授予；第三方 action pin 到 commit SHA；并发按 tag 去重且不取消；所有 checkout `persist-credentials: false`。
 
@@ -109,7 +107,7 @@ curl -fsSL https://github.com/LMQH/aaa/releases/latest/download/install.sh | sh
 | 真实渠道 e2e | repository secret，仅手动 job 可读，fork PR 不可见 | 否 |
 | 用户 API Key | 用户侧 `~/.aaa/secret.yaml`（0600），安装过程不接触 | 否 |
 
-公开仓库开启 secret scanning 与 push protection；CI 不使用 `pull_request_target` 检出并执行 PR 代码。
+公开仓库已开启 secret scanning 与 push protection；CI 不使用 `pull_request_target` 检出并执行 PR 代码。
 
 ## 八、合规
 
@@ -125,13 +123,13 @@ curl -fsSL https://github.com/LMQH/aaa/releases/latest/download/install.sh | sh
 | 2 | `uv build` + 隔离 HOME 安装冒烟 | wheel 含 `aaa`/`miniviking` 双包与入口点；`aaa --version` 等于 tag |
 | 3 | `scripts/install.sh`（POSIX） | 临时 `HOME` 下从 Release wheel 装出可运行命令；重复执行幂等 |
 | 4 | GitHub Release 草稿 + `SHA256SUMS` | 资产齐全且校验一致 |
-| 5 | `ci.yml` + `release.yml` | `ci.yml` 已通过 push 验证（全链路 291 项 + 构建）；`release.yml` 待首个 owner 确认的 tag 验证；dependabot 已生效（`agno` 基线已 ignore） |
+| 5 | `ci.yml` + `release.yml` | `ci.yml` 已通过 push 验证（test / secret-scan / lint）；`release.yml` 待首次发版验证；dependabot 已生效（`agno` 基线已 ignore） |
 | 6 | testPyPI / PyPI 批次 | testPyPI 演练发布；PyPI 注册后 `uv tool install` 可用 |
 
 ## 十、风险与取舍
 
 - **需要网络自举**：安装依赖 `astral.sh` 与 GitHub/PyPI 可达；离线环境不支持（首版不解决）。
-- **Windows 未实跑**：首版只宣称 POSIX（macOS / Linux / WSL）；`install.ps1` 与 Windows 冒烟在后续批次。
+- **Windows 未实跑**：首版只宣称 POSIX（macOS / Linux / WSL）；Windows 安装脚本与冒烟尚未实现。
 - **无版本文件**：非 git 环境（下载 sdist 手工安装）版本由构建时注入，不回落 `0.0.0`。
 - **包名注册**：`amaterasu-agno-agent` 在 PyPI 批次开始前注册占用；改名成本高。
 - **tag 不可变**：版本一旦发布不复用；错误只能由下一版本修正。

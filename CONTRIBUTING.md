@@ -6,7 +6,8 @@ aaa 是 Apache-2.0 开源项目。提交 Issue 或 PR 前，先读本页。
 
 ```bash
 uv sync --frozen --extra embedding
-./tests/run.sh
+scripts/aaa-dev.sh          # 源码直跑，人工自测入口
+./tests/run.sh              # 离线回归
 ```
 
 `./tests/run.sh` 是离线回归，不需要真实 API Key。真实渠道 e2e 需要自己的 `~/.aaa/secret.yaml`，不要提交任何密钥、令牌或个人路径。
@@ -30,7 +31,7 @@ uv sync --frozen --extra embedding
 
 - `main` 保护：禁 force push、禁删除、linear history；必需检查 `test` / `secret-scan` / `lint`。
 - 外部 PR 需 1 次 approval；维护者自己的 PR 在 CI 通过后合并。
-- `v*` tag 保护；tag 只由 `scripts/release.py tag` 创建，CI 不创建 tag；发版走 environment 审批（当前发版门未解禁）。
+- `v*` tag 保护；tag 只由 `scripts/release.py tag` 创建，CI 不创建 tag；发版走 environment 审批（门控已就绪，尚未发版）。
 - 开启 GitHub 私密安全公告，作为漏洞唯一入口。
 - 贡献按 Apache-2.0 授权，不要求 CLA。
 

@@ -16,8 +16,10 @@ aaa 是一个基于 [Agno](https://github.com/agno-agi/agno) 的中文优先终�
 
 ```bash
 uv sync --frozen
-PYTHONPATH=src .venv/bin/python -m aaa
+scripts/aaa-dev.sh
 ```
+
+`scripts/aaa-dev.sh` 是源码直跑入口：不打包、不装 wheel，当前目录就是工作区；改完代码退出重开即可。可以把它包一层放到 `PATH` 并命名为 `aaa-dev`，日常直接用 `aaa-dev`。
 
 首次启动按向导填写模型渠道的端点、密钥和模型。之后直接在对话里给任务；用 `/provide` 管理渠道，或看[渠道配置说明](docs/extending/models-and-channels.md)。
 
@@ -43,15 +45,15 @@ PYTHONPATH=src .venv/bin/python -m aaa
 
 初始权限为只读；需要写入时用 `/mode` 选择权限。权限策略与人工审批不是操作系统沙箱。
 
-脚本可用 `PYTHONPATH=src .venv/bin/python -m aaa -p "任务"` 执行单轮，或用 `--mode json` 消费逐行事件。参数与退出码见[命令手册](docs/commands.md)。
+开发入口可用 `scripts/aaa-dev.sh -p "任务"` 执行单轮，或用 `--mode json` 消费逐行事件。参数与退出码见[命令手册](docs/commands.md)。
 
 ## 当前可用范围
 
-核心 CLI 工作流已可从发布版安装使用。委派执行、确认保存与跨会话复用，内置记忆写入→新会话注入，自动压缩与归档检索，均已通过真实模型渠道验证；离线全量回归 291 项通过。尚未验证：Windows、外部记忆引擎的真实召回、物理终端键位；沙箱不是 OS 级隔离。当前不提供可在后台持续追踪目标的自主运行。
+核心 CLI 工作流可从源码使用；发布版安装流程已就绪，尚未发版。委派执行、确认保存与跨会话复用，内置记忆写入→新会话注入，自动压缩与归档检索，均已通过真实模型渠道验证；离线全量回归通过。尚未验证：Windows、外部记忆引擎的真实召回、物理终端键位；沙箱不是 OS 级隔离。当前不提供可在后台持续追踪目标的自主运行。
 
 ## 文档
 
 - [扩展与自定义](docs/extending/README.md)：技能、自定义命令、MCP、外置记忆引擎、启动动画、项目级扩展及配置方式。
 - [项目级扩展](docs/extending/project-extensions.md)：仓库自带命令/技能与 `AGENTS.md` 的规则；本仓库的 `.aaa/` 即示例。
 - [架构](docs/architecture.md)：如何复用 Agno 原生执行路径，以及 aaa 各层做什么。
-- [开发验证](tests/README.md)：离线回归与真实渠道验收的运行方式。
+- [开发验证](tests/README.md)：源码直跑用 `scripts/aaa-dev.sh`；离线回归与真实渠道验收的运行方式。

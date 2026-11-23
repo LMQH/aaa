@@ -19,7 +19,7 @@
 | `pi-cli-design.md` | Pi CLI 的命令面、会话、主题、模型与自定义 provider 蒸馏 | 官方文档 + 安装包源码（2026-11-15） |
 | `omp-cli-design.md` | omp CLI 的子命令、状态栏、上下文维护栈、扩展生态蒸馏 | 全量 `--help` + 配置树 + 二进制字符串（2026-11-16） |
 | `最小 AgentLoop 实现学习笔记.md` | 以 Pi `agent-loop.ts` 为参照的 803 行最小循环拆解 | 本机 Pi 源码（2026-10-28） |
-| `python-release-playbook.md` | 纯 Python CLI 的最小发版模式（打包、锁、发布流程） | 定案方案 |
+| `python-release-playbook.md` | 通用 zipapp + tag push + 自更新发版模式（已否决；现行设计见 `docs/release.md`） | 结论复核（2026-11-24） |
 | `从任务到目标的Agent架构演进.md` | Harrison Chase《From tasks to goals》：任务→目标的范式转变与六项工程落地要求 | LangChain 官方博客（2026-11-16） |
 | `从任务到目标的Goal设计方法.md` | Harrison Chase《Goal Engineering》：目标设计以便于人工反馈为核心约束，含 Actively AI 案例 | LangChain 官方博客（2026-11-14） |
 | `PersonalAgent与BusinessAgent架构差异调研.md` | 两种形态的四条结构性差异与十维对照；Agno（身份/存储/外壳强、执行缝缺）、Pi Core（镜像互补）、Hermes（多实例≠多租户）三条技术线的租户化距离与选型含义 | agno 3.1.12 源码复核 + Pi 源码快照 + omp 19.0.0 发布说明 + Hermes 官方文档（2026-11-19） |

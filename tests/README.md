@@ -8,6 +8,10 @@
 | 端到端 | `tests/e2e.py` | 真实 CLI 进程 + 真实渠道 + 真实工具，断言 stdout/产物/日志/库 | 分钟级，几十 token |
 | 交互 | `tests/pty_cases.py` | PTY 驱动 REPL：HITL 审批、`/provide` 向导 | 秒级，一次真实探查 |
 
+## 开发自测入口
+
+日常人工自测用 `scripts/aaa-dev.sh`（源码直跑，不装 wheel）；自动化回归仍用下面的 `./tests/run.sh`。人测负责真实终端、视觉与探索性使用。
+
 统一入口：
 
 ```bash
