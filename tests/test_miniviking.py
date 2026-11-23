@@ -9,10 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from fixtures import FakeModel, text, tool_call
+
 from aaa.config.settings import Settings
 from aaa.memory import MemoryHost, MemoryIdentity
-from aaa.runtime import agent as agent_mod, prompt
-from fixtures import FakeModel, text, tool_call
+from aaa.runtime import agent as agent_mod
+from aaa.runtime import prompt
 from miniviking import ENGINE
 from miniviking import config as config_module
 from miniviking.config import Config, LLMSettings
@@ -351,10 +353,10 @@ class FakeEmbedder:
     def embed(self, texts) -> list[list[float]]:
         self.calls += 1
         vectors = []
-        for text in texts:
-            if "猫" in text:
+        for chunk in texts:
+            if "猫" in chunk:
                 vector = [1.0, 0.0]
-            elif "狗" in text:
+            elif "狗" in chunk:
                 vector = [0.0, 1.0]
             else:
                 vector = [0.5, 0.5]

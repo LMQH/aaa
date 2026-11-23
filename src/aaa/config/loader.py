@@ -15,9 +15,9 @@ from typing import Dict, List, Optional
 
 import yaml
 
+from ..model.provider import DEFAULT_API, parse_cost
 from .paths import HOME_DIR, SECRET_FILE
 from .settings import Settings
-from ..model.provider import DEFAULT_API, parse_cost
 
 CONFIG_VERSION = 2
 

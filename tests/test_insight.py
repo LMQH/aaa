@@ -7,11 +7,11 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+import aaa.insight.collect  # noqa: F401  先加载子模块
 from aaa.cli import commands as commands_mod
 from aaa.cli.commands import handle_command
 from aaa.config.settings import Settings
 from aaa.insight import tokens as tokens_mod
-import aaa.insight.collect  # noqa: F401  先加载子模块
 
 collect_mod = sys.modules["aaa.insight.collect"]
 

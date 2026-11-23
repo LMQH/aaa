@@ -7,7 +7,7 @@ diff 在 cli 侧计算——读旧内容、按工具参数模拟结果，工具�
 
 import difflib
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 from ..boundary.policy import REVIEW_FILE_TOOLS
 

@@ -10,14 +10,19 @@ import os
 import sys
 import time
 from typing import Dict, List, Optional, Set
+
 import questionary
 from agno.agent import Agent
 from agno.run import agent as agent_events
 
-from ..boundary.policy import (
-    APPROVAL_ALWAYS, REVIEW_FILE_TOOLS, is_external_tool, needs_approval, signature,
-)
 from ..boundary.danger import danger_reason
+from ..boundary.policy import (
+    APPROVAL_ALWAYS,
+    REVIEW_FILE_TOOLS,
+    is_external_tool,
+    needs_approval,
+    signature,
+)
 from ..memory import MemoryHost
 from ..runtime.delegation import SAVE_TOOL, parent_run_id, save_approvals
 from .diff import change_diff

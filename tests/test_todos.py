@@ -5,7 +5,11 @@ import unittest
 from types import SimpleNamespace
 
 from aaa.tools.builtin.todos import (
-    normalize, todo_add, todo_done, todo_list, todo_start,
+    normalize,
+    todo_add,
+    todo_done,
+    todo_list,
+    todo_start,
 )
 
 

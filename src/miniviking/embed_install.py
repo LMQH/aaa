@@ -14,7 +14,6 @@ import logging
 import shutil
 import subprocess
 import sys
-import threading
 
 logger = logging.getLogger("aaa.memory.miniviking")
 

@@ -9,7 +9,7 @@ Catalog——与「换模型即重建 Agent」同一条纪律。
 
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 from agno.models.base import Model
 

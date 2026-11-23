@@ -7,8 +7,8 @@ import questionary
 from prompt_toolkit.styles import Style as PromptStyle
 from prompt_toolkit.utils import get_cwidth
 
-from .render import sanitize
 from . import usage_stats
+from .render import sanitize
 
 # 配置向导与菜单的样式：只加粗关键位置，不使用主题色。
 UI_STYLE = questionary.Style([

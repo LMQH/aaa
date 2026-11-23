@@ -13,6 +13,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.run import RunContext
 from agno.run.cancel import is_cancelled
+from fixtures import FakeModel, text, tool_call
 
 from aaa.boundary.policy import resolve_policy
 from aaa.cli.run import stream_run
@@ -21,7 +22,6 @@ from aaa.model.catalog import ModelRef, Resolved
 from aaa.runtime.agent import tools_for_mode
 from aaa.runtime.delegation import make_delegation_tools
 from aaa.runtime.delegation_registry import DelegationRegistry
-from fixtures import FakeModel, text, tool_call
 
 
 class Emitter:
@@ -189,7 +189,8 @@ class DelegationTest(unittest.TestCase):
         target = self.root / "must-not-write"
         spec = bundle("guard", {"kind": "workflow", "steps": [{"kind": "agent", "name": "work", "ref": "member"}]},
                       member=actor(tools=["write_file"]))
-        model = lambda: FakeModel([tool_call("write_file", {"path": str(target), "content": "unsafe"}), text("worker done")])
+        def model():
+            return FakeModel([tool_call("write_file", {"path": str(target), "content": "unsafe"}), text("worker done")])
         emitter = Emitter(True)
         out = self.run_main(self.main([register(spec), delegate("missing", "guard")], {"worker": model}, "workspace-write"),
                             emitter=emitter)

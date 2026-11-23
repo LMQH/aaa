@@ -12,7 +12,7 @@ from agno.tools.function import Function
 
 from ..boundary.policy import PolicySource, resolve_policy
 from ..config.paths import DATA_DIR, DB_FILE
-from ..context.params import compaction_budget, compact_threshold, history_runs
+from ..context.params import compact_threshold, compaction_budget, history_runs
 from ..memory import MemoryEngineError
 from ..memory.host import ActiveMemory, MemoryHost
 from ..model.catalog import Catalog, ModelRef

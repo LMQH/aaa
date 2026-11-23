@@ -5,16 +5,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-import hashlib
 import os
 import re
 import time
 import tomllib
 import uuid
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Optional, Sequence
 
 from aaa.memory.protocol import MemoryEntry, MemoryIdentity, MemoryTool
 
@@ -477,7 +477,6 @@ class Engine:
         source = Path(str(payload["source"]))
         dest = str(payload["dest"])
         tags = tuple(payload.get("tags") or ())
-        limits = self.config.limits
         if payload["kind"] == "file":
             files = [source]
             skipped: list[str] = []

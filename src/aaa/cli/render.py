@@ -7,7 +7,7 @@
 import difflib
 import io
 import re
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from rich.console import Console
 from rich.markdown import Markdown

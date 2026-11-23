@@ -14,14 +14,21 @@ from unittest import mock
 
 from agno.memory import UserMemory
 from agno.tools.function import Function
+from fixtures import FakeModel, text, tool_call
 
 from aaa.cli.run import stream_continue
 from aaa.config.settings import Settings
-from aaa.memory import MemoryEntry, MemoryEngineError, MemoryHost, MemoryIdentity, MemoryTool
+from aaa.memory import (
+    MemoryEngineError,
+    MemoryEntry,
+    MemoryHost,
+    MemoryIdentity,
+    MemoryTool,
+)
 from aaa.memory.agno import read_builtin
 from aaa.plugins import BUILTIN_SKILLS_DIR, discover_skills
-from aaa.runtime import agent as agent_mod, prompt
-from fixtures import FakeModel, text, tool_call
+from aaa.runtime import agent as agent_mod
+from aaa.runtime import prompt
 
 
 def _plugin_tool() -> Function:

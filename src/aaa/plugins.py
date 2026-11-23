@@ -20,11 +20,11 @@ MCP 桥接：agno 的 MCPTools 只支持异步上下文，而 aaa 的 agent 是�
 import asyncio
 import re
 import threading
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
-import tomllib
 from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
 from agno.utils.path_safety import safe_join_relative_path

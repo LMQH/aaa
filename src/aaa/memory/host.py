@@ -11,7 +11,17 @@ import logging
 import re
 import threading
 from contextvars import ContextVar
-from typing import Any, Callable, Dict, FrozenSet, Literal, Optional, Protocol, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    FrozenSet,
+    Literal,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+)
 
 from .protocol import (
     MemoryEngine,

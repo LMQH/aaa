@@ -35,6 +35,8 @@ from .animations import (
     load,
     paint,
     static_of,
+)
+from .animations import (
     version as package_version,
 )
 from .render import sanitize

@@ -5,8 +5,8 @@ import json
 import logging
 import os
 import shlex
-import sys
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import closing
@@ -19,15 +19,23 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.application import in_terminal, set_app
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition, has_focus, is_done
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.filters import Condition, has_focus, is_done
-from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.layout import ConditionalContainer, Dimension, HSplit, VerticalAlign, Window
+from prompt_toolkit.layout import (
+    ConditionalContainer,
+    Dimension,
+    HSplit,
+    VerticalAlign,
+    Window,
+)
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import print_formatted_text
 
+from .. import plugins
+from .. import trust as trust_mod
 from ..boundary.policy import MODES
 from ..config.loader import ConfigError, load_config
 from ..config.paths import ANIMATIONS_DIR, HISTORY_FILE
@@ -36,24 +44,35 @@ from ..context.params import compact_threshold
 from ..memory import MemoryEngineError, MemoryHost
 from ..model.catalog import Ambiguous, Resolved
 from ..runtime.logging_setup import setup_logging
+from ..sessions.query import (
+    ensure_session_name,
+    find_session,
+    latest_session_for_cwd,
+    remember_session,
+)
+from ..todo_contract import normalize
 from ..usage.cost import cost_of
-from ..sessions.query import ensure_session_name, find_session, latest_session_for_cwd, remember_session
+from . import banner as banner_view
 from .args import Options, parse_args
+from .commands import configure, handle_command, show_memory_status
 from .controller import Controller
 from .git_status import read_status
 from .key_input import create_cli_input, is_shift_enter
-from . import banner as banner_view
-from .. import plugins, trust as trust_mod
-from ..todo_contract import normalize
-from .commands import configure, handle_command, show_memory_status
 from .run import HumanEmitter, JsonEmitter, PlainEmitter, stream_continue, stream_run
 from .state import AppState
 from .tool_details import ToolDetails
-from .usage_stats import note_used
 from .ui import (
-    COMMANDS, EDITOR_PROMPT, GLYPH, editor_status, ellipsize,
-    reset_cursor_color, set_cursor_color, style_for, todo_lines,
+    COMMANDS,
+    EDITOR_PROMPT,
+    GLYPH,
+    editor_status,
+    ellipsize,
+    reset_cursor_color,
+    set_cursor_color,
+    style_for,
+    todo_lines,
 )
+from .usage_stats import note_used
 
 # 退出码：0 成功，1 运行失败/会话不存在，2 用法/配置问题，130 被中断。
 logger = logging.getLogger(__name__)

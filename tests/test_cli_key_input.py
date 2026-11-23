@@ -7,7 +7,7 @@ from prompt_toolkit.input.vt100_parser import Vt100Parser
 from prompt_toolkit.keys import Keys
 
 from aaa.cli.app import enter_action
-from aaa.cli.key_input import ModifiedEnter, SHIFT_ENTER_SEQUENCES
+from aaa.cli.key_input import SHIFT_ENTER_SEQUENCES, ModifiedEnter
 
 
 def parse(chunks):

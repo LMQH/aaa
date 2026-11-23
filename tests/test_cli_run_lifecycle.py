@@ -3,8 +3,6 @@
 import contextlib
 import io
 import json
-from pathlib import Path
-import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -21,6 +19,7 @@ from agno.run.agent import (
     ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
+from fixtures import FakeModel, text
 
 from aaa.cli.run import JsonEmitter, approve_requirements, stream_continue, stream_run
 

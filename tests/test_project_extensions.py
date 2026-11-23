@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from unittest import mock
 
 from aaa import plugins
-from aaa.cli import commands as commands_mod
 from aaa.cli.commands import handle_command
 from aaa.config.settings import Settings
 from aaa.runtime import prompt as prompt_mod

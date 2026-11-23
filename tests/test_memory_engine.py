@@ -17,10 +17,9 @@ from agno.memory import UserMemory
 from aaa.config import settings as settings_mod
 from aaa.config.settings import Settings, load_settings, save
 from aaa.memory import (
-    MemoryEntry,
     MemoryEngineError,
+    MemoryEntry,
     MemoryHost,
-    MemoryTool,
     MemoryIdentity,
     engine_ids,
     get_engine,

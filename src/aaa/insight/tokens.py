@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import OrderedDict
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 from agno.tools.function import Function
 from agno.utils import tokens as agno_tokens

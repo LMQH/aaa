@@ -5,12 +5,12 @@
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional, Protocol, Set
+from typing import Any, Protocol, Set
 
 from agno.agent import Agent
-from agno.session import AgentSession
 from agno.db.base import SessionType
 from agno.models.message import Message
+from agno.session import AgentSession
 
 from ..config.paths import DB_FILE
 from ..model.provider import Channel, ChannelModel, build_title_model

@@ -23,9 +23,11 @@ from agno.agent import Agent
 from agno.compaction import Compaction
 from agno.db.sqlite import SqliteDb
 from agno.tools import Toolkit
+from fixtures import FakeModel, text, tool_call
+from prompt_toolkit.document import Document
 
-from aaa.boundary.danger import danger_reason
 from aaa import plugins
+from aaa.boundary.danger import danger_reason
 from aaa.boundary.policy import (
     APPROVAL_ALWAYS,
     APPROVAL_DANGEROUS,
@@ -39,30 +41,28 @@ from aaa.boundary.policy import (
     resolve_policy,
     signature,
 )
-from aaa.cli.commands import _print_usage, handle_command
 from aaa.cli import commands as commands_mod
 from aaa.cli import usage_stats
+from aaa.cli.commands import _print_usage, handle_command
 from aaa.cli.completer import SlashCompleter
 from aaa.cli.diff import change_diff
-from aaa.sessions.query import list_sessions
-from prompt_toolkit.document import Document
+from aaa.cli.run import approve_requirements, stream_continue, stream_run
 from aaa.cli.state import AppState
 from aaa.cli.ui import display_width
-from aaa.cli.run import approve_requirements, stream_continue, stream_run
 from aaa.config import settings as settings_mod
 from aaa.config.loader import normalize_config
 from aaa.config.settings import Settings, load_settings, save
-from aaa.context.params import compaction_budget, compact_threshold, history_runs
-from aaa.model.catalog import Ambiguous, NotFound, Resolved, from_config
-from aaa.runtime.agent import tools_for_mode
+from aaa.context.params import compact_threshold, compaction_budget, history_runs
+from aaa.model.catalog import Ambiguous, NotFound, from_config
 from aaa.model.provider import parse_cost
+from aaa.runtime.agent import tools_for_mode
 from aaa.sessions import index
-from aaa.usage.cost import cost_of, multiplier
-from aaa.usage import ledger, report
+from aaa.sessions.query import list_sessions
 from aaa.tools.assemble import build_tools, tool_names
 from aaa.tools.builtin.powershell import PowerShellTools, find_powershell
 from aaa.tools.builtin.processes import ProcessTools
-from fixtures import FakeModel, text, tool_call
+from aaa.usage import ledger, report
+from aaa.usage.cost import cost_of, multiplier
 
 
 def output_of_usage(data) -> str:
@@ -699,7 +699,7 @@ class AgentLoopTest(unittest.TestCase):
         emitter = Yes()
         approve_requirements(requirements, set(), emitter, review_root=root)
         self.assertIn("新建 n.txt", emitter.diff)
-        resumed = agent.continue_run(
+        agent.continue_run(
             run_response=paused, requirements=requirements, session_id="s-ws"
         )
         self.assertEqual((root / "n.txt").read_text(encoding="utf-8"), "hi")
@@ -804,8 +804,8 @@ class ExportCommandTest(unittest.TestCase):
         return agent
 
     def test_export_writes_markdown_transcript(self) -> None:
-        import io as _io
         import contextlib as _cl
+        import io as _io
 
         agent = self._agent([text("回答一"), text("回答二")])
         agent.run("问题一", session_id="s-e")
@@ -919,7 +919,6 @@ class PluginsTest(unittest.TestCase):
         self.assertFalse(is_external_tool("run_shell_command"))
 
     def test_create_tools_validate_and_write(self) -> None:
-        from aaa.config import paths as paths_mod
 
         home = Path(tempfile.mkdtemp(prefix="aaa-inst-"))
         with mock.patch.object(plugins, "COMMANDS_DIR_DEFAULT", home / "commands"), \
@@ -1160,7 +1159,7 @@ class UsageTest(unittest.TestCase):
                            output_tokens=100, unpriced=1, requests=1),
             ],
         )
-        lines = [l for l in output_of_usage(data).splitlines() if l.strip()]
+        lines = [line for line in output_of_usage(data).splitlines() if line.strip()]
         table = lines[1:-1]  # 去掉标题与「未定价」提示
         widths = {display_width(line) for line in table}
         self.assertEqual(len(widths), 1, output_of_usage(data))

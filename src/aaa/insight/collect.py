@@ -7,8 +7,19 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 from ..memory.host import MemoryHost
-from ..runtime.agent import skill_context, system_instructions, tools_for_mode, tool_names
-from .tokens import CountResult, count_text, count_tool_schemas, tokenizer_label, tool_schema_payloads
+from ..runtime.agent import (
+    skill_context,
+    system_instructions,
+    tool_names,
+    tools_for_mode,
+)
+from .tokens import (
+    CountResult,
+    count_text,
+    count_tool_schemas,
+    tokenizer_label,
+    tool_schema_payloads,
+)
 
 
 @dataclass

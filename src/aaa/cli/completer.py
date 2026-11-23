@@ -5,8 +5,8 @@ from typing import Any, List, Optional, Protocol
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import FormattedText
 
-from ..memory import engine_ids
 from .. import trust as trust_mod
+from ..memory import engine_ids
 from . import usage_stats
 from .ui import COMMANDS, ICONS
 

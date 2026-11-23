@@ -9,8 +9,6 @@ import json
 from agno.run import RunContext
 
 from ...todo_contract import normalize
-from ...todo_contract import STATUSES as _STATUSES
-
 
 
 def _todos(run_context: RunContext) -> list:

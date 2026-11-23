@@ -10,8 +10,8 @@ import tomllib
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .paths import CONFIG_FILE, MEMORY_DATA_ROOT
 from ..boundary.policy import APPROVAL_STRATEGIES, MODES
+from .paths import CONFIG_FILE, MEMORY_DATA_ROOT
 
 # 生效方式：
 #   runtime   —— 改完立即重建 Agent（模型、上下文、工具、记忆）

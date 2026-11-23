@@ -99,6 +99,7 @@ if __name__ == "__main__":
 class TodoViewTest(unittest.TestCase):
     def test_theme_styles_parse_and_todo_classes_defined(self) -> None:
         from prompt_toolkit.styles import Style
+
         from aaa.cli.ui import PT_STYLES, TODO_STYLES
 
         for name, theme in PT_STYLES.items():
@@ -111,6 +112,7 @@ class TodoViewTest(unittest.TestCase):
         import contextlib
         import io
         from types import SimpleNamespace
+
         from aaa.cli.commands import _todos_command
 
         state = SimpleNamespace(

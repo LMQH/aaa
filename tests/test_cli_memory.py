@@ -7,26 +7,25 @@ import contextlib
 import io
 import tempfile
 import unittest
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 from agno.db.schemas.memory import UserMemory
 from agno.db.sqlite import SqliteDb
+from fixtures import FakeModel, text
 from prompt_toolkit.document import Document
 
 from aaa.cli import commands as commands_mod
-from aaa.cli.commands import handle_command
 from aaa.cli import state as state_mod
+from aaa.cli.commands import handle_command
 from aaa.cli.completer import SlashCompleter
 from aaa.cli.ui import print_help
 from aaa.config import settings as settings_mod
 from aaa.config.settings import Settings
-from aaa.memory import registry as registry_mod
 from aaa.memory import MemoryEntry, MemoryHost, MemoryIdentity
+from aaa.memory import registry as registry_mod
 from aaa.runtime import agent as agent_mod
-from fixtures import FakeModel, text
 
 BASE = 1_700_000_000
 

@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Optional, Sequence, Tuple
+from typing import Iterator, Optional, Sequence, Tuple
 
 import yaml
 

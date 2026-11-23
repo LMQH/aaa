@@ -10,7 +10,8 @@ import math
 import zlib
 from typing import Callable, Iterator, List, Optional, Tuple
 
-from . import Frame, FrameContext, version as package_version
+from . import Frame, FrameContext
+from . import version as package_version
 
 RESET = "\x1b[0m"
 

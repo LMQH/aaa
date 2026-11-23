@@ -9,6 +9,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from agno.session import AgentSession
+from fixtures import FakeModel, text
 
 from aaa.cli.app import apply_options, clear_credentials, last_completed_run_id
 from aaa.cli.args import parse_args
@@ -17,7 +18,6 @@ from aaa.cli.run import stream_run
 from aaa.cli.state import AppState
 from aaa.config.settings import Settings
 from aaa.sessions.query import list_sessions, remember_session
-from fixtures import FakeModel, text
 
 
 class AgentSessionCommandTest(TestCase):
