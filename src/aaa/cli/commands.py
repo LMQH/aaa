@@ -12,22 +12,23 @@ from agno.session import AgentSession
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_bindings import merge_key_bindings
 
+from .. import insight as insight_mod
+from .. import trust as trust_mod
 from ..boundary.policy import MODES
+from ..config.loader import CONFIG_VERSION, SECRET_FILE, probe_models, save_config
+from ..config.paths import DB_FILE
+from ..config.settings import APPLY_RESTART, APPLY_RUNTIME, BY_PATH
+from ..config.settings import save as save_settings
 from ..memory import engine_ids
 from ..memory.agno import read_builtin
-from ..config.loader import CONFIG_VERSION, SECRET_FILE, probe_models, save_config
-from ..config.settings import APPLY_RESTART, APPLY_RUNTIME, BY_PATH, save as save_settings
 from ..model.catalog import Ambiguous, NotFound, Resolved
 from ..model.provider import API_CLASSES, DEFAULT_API
-from ..config.paths import DB_FILE
 from ..plugins import project_dirs, toggle_extension
-from .. import trust as trust_mod
-from ..todo_contract import normalize
 from ..sessions import index
 from ..sessions.query import find_session, list_sessions, session_label
+from ..todo_contract import normalize
 from ..usage import ledger as usage_ledger
 from ..usage import report as usage_report
-from .. import insight as insight_mod
 from .render import sanitize
 from .state import AppState
 from .ui import GLYPH, UI_STYLE, display_width, pad, print_help
@@ -81,7 +82,7 @@ def configure(existing: Optional[Dict], settings) -> Optional[Dict]:
             return None
         raw = {}
 
-    channel = _edit_channel(provider_id, raw)
+    channel = _edit_channel(provider_id, raw, settings)
     if channel is None:
         return None
     providers[provider_id] = channel
@@ -124,7 +125,7 @@ def _ask_channel_id(providers: Dict[str, Dict]) -> Optional[str]:
     return value
 
 
-def _edit_channel(provider_id: str, raw: Dict) -> Optional[Dict]:
+def _edit_channel(provider_id: str, raw: Dict, settings) -> Optional[Dict]:
     api = _ask_menu(questionary.select(
         "协议",
         choices=[
@@ -564,19 +565,19 @@ def _todos_command(state: AppState) -> None:
     print(f"TODO {done}/{len(todos)}")
     order: List[str] = []
     grouped: Dict[str, List] = {}
-    for index, item in enumerate(todos, 1):
+    for number, item in enumerate(todos, 1):
         phase = item.get("phase") or "任务"
         if phase not in grouped:
             order.append(phase)
             grouped[phase] = []
-        grouped[phase].append((index, item))
+        grouped[phase].append((number, item))
     for phase in order:
         items = grouped[phase]
         count_done = sum(1 for _, item in items if item.get("status") == "completed")
         print(f"  {phase} {count_done}/{len(items)}")
-        for index, item in items:
+        for number, item in items:
             mark = {"completed": "[x]", "in_progress": "[>]"}.get(item.get("status"), "[ ]")
-            print(f"    {mark} {index}. {item.get('text', '')}")
+            print(f"    {mark} {number}. {item.get('text', '')}")
 
 
 # ---------------------------------------------------------------- /insight
@@ -640,9 +641,9 @@ def _trust_command(state: AppState, argument: str) -> None:
         roots = sorted(entries)
         target = None
         if rest.isdigit():
-            index = int(rest)
-            if 1 <= index <= len(roots):
-                target = roots[index - 1]
+            number = int(rest)
+            if 1 <= number <= len(roots):
+                target = roots[number - 1]
         else:
             try:
                 wanted = str(Path(rest).expanduser().resolve())
@@ -679,12 +680,12 @@ def _trust_command(state: AppState, argument: str) -> None:
     if not entries:
         print("  无")
     else:
-        for index, (root, kinds) in enumerate(sorted(entries.items()), 1):
+        for number, (root, kinds) in enumerate(sorted(entries.items()), 1):
             summary = "、".join(
                 f"{trust_mod.KIND_LABELS.get(kind, kind)}:{value[:8]}"
                 for kind, value in sorted(kinds.items())
             )
-            print(f"  {index}. {sanitize(root)}（{summary}）")
+            print(f"  {number}. {sanitize(root)}（{summary}）")
 
 
 # ---------------------------------------------------------------- /memory
