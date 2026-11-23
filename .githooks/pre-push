@@ -1,0 +1,20 @@
+#!/bin/sh
+# 发布 tag 只能由 scripts/release.py 推送；CI 不创建 tag。
+# 这是本地兜底，可被 --no-verify 绕过；服务端 tag protection 才是硬门。
+
+set -eu
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/tags/v*)
+            tag=${remote_ref#refs/tags/}
+            if [ "${AAA_ALLOW_TAG_PUSH:-}" != "$tag" ]; then
+                echo "拒绝：$tag 只能由 scripts/release.py tag 推送。" >&2
+                echo "发布 tag 必须经 owner 确认；CI 不创建 tag。" >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+exit 0

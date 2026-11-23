@@ -8,6 +8,7 @@
 - 只做本轮授权范围；扩面、改变已约定的外部行为，以及新原则、跨模块取舍、呈现形态级方向，先经 owner 批准。删除文件或目录前列精确清单并取得确认。
 - owner 决定原则、范围、外部契约、优先级与是否接受；原则内的具体实现由实现者自主决定。自主选择在交付中列「设计与文案自选清单」反馈，CLI 的选择同时在 `src/aaa/cli/DESIGN.md` 维护当前待决或已定结论；owner 可事后否决。
 - **发版 tag 必须经 owner 确认**：任何 `vX.Y.Z` 发布 tag 的创建、移动、删除与推送，都必须先获得 owner 对该版本号的明确确认。构建、本地验证与草稿 Release 不属于发布，不得以「准备发布」为由先行打 tag。
+- **tag 只由 `python scripts/release.py tag vX.Y.Z` 创建并推送**；CI 不创建 tag，本地 `pre-push` 拒绝裸 `v*` tag。
 
 ## 核心设计红线
 
@@ -27,6 +28,16 @@
 2. 涉及调用方、持久数据或外部副作用，先定输入输出、失败语义与不变量；真实数据迁移或外部兼容还须明确兼容与恢复边界。契约优先用类型、接口或行为测试表达，不预演内部结构。
 3. 先做最小可运行闭环，以执行反馈决定内部实现。需要重新决定模块边界的重写或跨模块改动，先在相关模块 `DESIGN.md` 写一页边界与目标；稳态小改不机械补设计。
 4. 验证后只更新受影响的使用说明、重要约定与工作线状态；纯内部修改不机械更新文档。旧实现和未受保护的行为不自动成为必须保留的契约。
+
+## Git 纪律
+
+- 只在用户明确要求时 commit；只提交本轮自己改的文件，不带入并行改动或无关文件。
+- 只 `git add` 明确路径；禁 `git add -A`、`git add .`。提交前先 `git status`，确认暂存区只有自己的文件。
+- 禁 `git commit --no-verify`；禁 `git reset --hard`、`git checkout .`、`git clean -fd`、`git stash`；禁 force push。
+- 冲突只解自己改的文件；冲突涉及未改文件时停下问用户。
+- commit message 用 `type(scope): 摘要`，type 取 `feat`/`fix`/`docs`/`test`/`chore`；摘要说明做了什么，不复述 diff。
+- 不提交密钥、`.env`（`.env.example`/`.env.sample` 除外）、`secret.yaml`、`*.pem`、`*.key`、`*.db`、`dist/`、`.venv/`。`uv.lock` 变更需显式确认；pre-commit 会阻断，确需提交时用 `AAA_ALLOW_LOCKFILE_CHANGE=1`。
+- 克隆后执行 `git config core.hooksPath .githooks` 启用本地 pre-commit。hooks 可被 `--no-verify` 绕过，服务端 CI 仍是最终门。
 
 ## 配置与依赖约定
 

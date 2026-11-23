@@ -1,0 +1,47 @@
+#!/bin/sh
+# aaa pre-commit：路径门 + 高置信密钥扫描 + uv.lock 变更门。
+# 本地可被 `git commit --no-verify` 绕过；CI 的 secret-scan 是最终门。
+
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+# 1. 路径门：密钥、运行数据、构建产物、venv 不入库。
+for f in $staged; do
+    case "$f" in
+        .env|*/.env|.env.*|*/.env.*)
+            case "$f" in
+                *.example|*.sample) ;;
+                *)
+                    echo "拒绝：$f 不得入库（只允许 .env.example/.env.sample）" >&2
+                    exit 1
+                    ;;
+            esac
+            ;;
+        secret.yaml|*/secret.yaml|*.secret.yaml|*.pem|*.key|*.p12|*.pfx|*.db|*.sqlite|*.sqlite3|dist/*|*/.venv/*|.venv/*|.DS_Store|*/.DS_Store)
+            echo "拒绝：$f 不得入库" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# 2. 密钥内容门：扫暂存区，只报文件名，不打印命中内容。
+./scripts/check_secrets.sh --staged
+
+# 3. Python lint：只在暂存 .py 时跑，避免无关提交等待。
+if printf '%s\n' "$staged" | grep -Eq '\.py$'; then
+    uvx ruff==0.17.6 check
+fi
+
+# 4. 锁文件门：uv.lock 变更必须显式确认。
+if printf '%s\n' "$staged" | grep -qx 'uv.lock' && [ "${AAA_ALLOW_LOCKFILE_CHANGE:-}" != "1" ]; then
+    echo "uv.lock 被暂存；确认依赖变更后使用：" >&2
+    echo "  AAA_ALLOW_LOCKFILE_CHANGE=1 git commit ..." >&2
+    git diff --cached --stat -- uv.lock >&2
+    exit 1
+fi
+
+exit 0
