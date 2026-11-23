@@ -1,32 +1,69 @@
 name: release
 
-# 只响应已推送的 tag；tag 必须经 owner 确认后人工创建并推送（AGENTS.md 授权与决定权）。
-# CI 不创建、不移动 tag，也不发布 Release：只构建、校验并生成草稿，发布由 owner 决定。
+# 发版门：tag 由 scripts/release.py 创建，CI 不创建 tag。
+# 只响应手动 dispatch + confirm=RELEASE；build 在 environment: release 审批后执行；
+# draft-release 只建草稿，正式发布由 owner 手动点击。
+
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
         description: 已存在且经 owner 确认的版本 tag（如 v0.3.0）
         required: true
+      confirm:
+        description: 输入 RELEASE 才允许构建
+        required: true
 
-permissions:
-  contents: write
+concurrency:
+  group: release-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+permissions: {}
 
 jobs:
-  build:
+  preflight:
+    if: github.event.inputs.confirm == 'RELEASE'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.inputs.tag }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           python-version: "3.13"
       - name: Resolve tag
-        run: echo "TAG=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+        run: echo "TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_ENV"
+      - name: Verify tag
+        run: |
+          test "$(git cat-file -t "$TAG")" = "tag" || { echo "$TAG 不是 annotated tag"; exit 1; }
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$TAG^{commit}" origin/main || { echo "$TAG 不在 main 祖先链上"; exit 1; }
+      - name: Preflight
+        run: |
+          uv sync --frozen --extra embedding
+          ./tests/run.sh
+
+  build:
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          python-version: "3.13"
+      - name: Resolve tag
+        run: echo "TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_ENV"
       - name: Build
         run: uv build
       - name: Verify version equals tag
@@ -47,33 +84,41 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.inputs.tag }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           python-version: "3.13"
       - name: Build and install
         run: |
           uv build
-          uv tool install --force dist/*.whl
+          cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
+          cd ..
+          sh scripts/install.sh --wheel dist/*.whl
           aaa --version
 
   draft-release:
     needs: smoke
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event.inputs.tag }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           python-version: "3.13"
       - name: Resolve tag
-        run: echo "TAG=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+        run: echo "TAG=${{ github.event.inputs.tag }}" >> "$GITHUB_ENV"
       - name: Build
         run: uv build
       - name: Checksums

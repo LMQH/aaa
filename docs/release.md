@@ -1,6 +1,6 @@
 # 构建与发布
 
-状态：**构建批已开始**（2026-11-23）：LICENSE、动态版本（hatch-vcs）、`aaa` 命令入口已落地；分发包、安装脚本与 CI 未实现。
+状态：**发版门代码侧就绪，尚未解禁**（2026-11-23）。tag 由 `scripts/release.py` 创建，CI 不创建 tag；release workflow 只允许手动 dispatch + `confirm=RELEASE` + `environment: release` 审批；`SHA256SUMS` 已接入安装校验。远程建立后配置 tag protection 与环境 required reviewers，再解禁。
 
 ## 一、定位与边界
 
@@ -36,8 +36,8 @@ scripts/
 .aaa/
   skills/release/    # Agent 操作规程（SKILL.md）
 .github/workflows/
-  ci.yml             # push / PR：离线回归 + 构建校验
-  release.yml        # tag：构建 → 草稿 Release → POSIX 冒烟 → 发布
+  ci.yml             # push / PR：离线回归 + 密钥扫描 + lint
+  release.yml        # 手动 dispatch：preflight → 审批 → 构建/冒烟 → 草稿 Release
 docs/release.md      # 本文
 ```
 
@@ -62,40 +62,41 @@ curl -fsSL https://github.com/LMQH/AAA/releases/latest/download/install.sh | sh
 | 回滚 = 重新安装指定版本的 wheel（GitHub Release 附件） | 复杂化回滚机制 |
 | `--mirror cn`（阿里主、清华回退）/ `--mirror tuna` / `--index-url URL` 换依赖源；失败时提示换源并可用 `UV_HTTP_TIMEOUT` 延长 | 依赖源访问慢或不可达 |
 
-## 五、发布流程（tag 驱动）
+## 五、发布流程（人建 tag）
 
-1. `python scripts/release.py preflight --tag vX.Y.Z`
-   校验：工作区干净、在 `main`、与 `origin/main` 同步、tag 未被占用（本地与远端）、版本号合法、`uv sync --frozen --extra embedding` 通过（依赖与锁一致）、`./tests/run.sh` 通过（可 `--skip-tests` 显式跳过）。
+1. `python scripts/release.py preflight vX.Y.Z`（可选，只检查）
+   校验：工作区干净、在 `main`、与 `origin/main` 同步、tag 未被占用（本地与远端）、版本号合法、`uv sync --frozen --extra embedding` 与 `./tests/run.sh` 通过。
 2. `python scripts/release.py tag vX.Y.Z`
-   创建 annotated tag 并推送。**创建 tag 前必须取得 owner 对该版本号的明确确认**（见 `AGENTS.md` 授权与决定权）；推送后不再重跑本步骤；失败只修 forward。
-3. CI `release.yml` 自动执行（首版形态）：构建 → 两平台 POSIX 冒烟（ubuntu / macos）→ 草稿 Release 上传资产 → 全绿后发布。PyPI / testPyPI job 在后续批次启用。
-4. `python scripts/release.py verify --tag vX.Y.Z`
-   校验：Release 资产齐全（`install.sh`、`SHA256SUMS`、wheel/sdist）；`SHA256SUMS` 与实际文件一致。
-5. 失败恢复：PyPI 版本已存在则跳过上传；草稿 Release 存在则续传资产；资产发布失败删除草稿、保留 tag。
+   非交互：先跑同一 preflight，再创建 annotated tag；有 `origin` 时推送 `main` 与 tag。**调用前必须取得 owner 对该版本号的明确确认**（见 `AGENTS.md` 授权与决定权）；CI 不创建 tag；推送后不再重跑本步骤，失败只修 forward。
+3. 在 GitHub 手动 dispatch `release.yml`，输入 tag 与 `RELEASE`；preflight 校验 annotated tag 与 `main` 祖先链，`environment: release` 审批后构建、双平台冒烟、生成草稿 Release。
+4. `python scripts/release.py verify vX.Y.Z`
+   校验：本地产物与 `SHA256SUMS`；有 `gh` 时校验 Release 资产齐全。
+5. 草稿 Release 由 owner 手动发布；`install.sh` 下载后校验 `SHA256SUMS`，校验失败不安装。
 
 语义化约定（pre-1.0）：`minor` 允许破坏性变更，`patch` 只含修复与新增；`major` 暂不使用。变更描述由 owner 维护的 `CHANGELOG` 承载，不由脚本生成。
 
 ## 六、CI 设计（两级）
 
-状态：`ci.yml` / `release.yml` 已落地（2026-11-23）；第三方 action 固定到 commit SHA；release 只构建并生成草稿，发布由 owner 决定；PyPI / testPyPI job 后续批次启用。
+状态：`ci.yml` / `release.yml` 已落地（2026-11-23）；第三方 action 固定到 commit SHA；发版 tag 由 `scripts/release.py` 创建，CI 不创建 tag；release 只构建并生成草稿，发布由 owner 决定；PyPI / testPyPI job 后续批次启用。
 
 **`ci.yml`（push / PR）**
 
-- `ubuntu-latest`；`uv sync --frozen`；`./tests/run.sh`；`uv build` 确认可打包。
+- `ubuntu-latest`；`uv sync --frozen`；`./tests/run.sh`；构建在 release workflow。
 - 不跑真实渠道 e2e：需要密钥、会花钱、依赖外网。
 - `concurrency` 按 ref 取消旧跑。
 
-**`release.yml`（`push tags v*` 与 `workflow_dispatch(tag)`）**
+**`release.yml`（仅 `workflow_dispatch(tag, confirm)`）**
 
 | job | 依赖 | 内容 |
 |---|---|---|
-| `build` | — | `uv build`；生成 `SHA256SUMS`；上传 artifact |
-| `smoke` | build | matrix：`ubuntu-latest` / `macos-latest`；在干净 `HOME` 下执行 `install.sh`，断言 `aaa --version` 等于 tag |
-| `release` | smoke | 先建草稿 Release 上传资产，全绿后发布；任何失败删除草稿 |
+| `preflight` | — | 校验 annotated tag、`main` 祖先链；`uv sync --frozen --extra embedding` 与 `./tests/run.sh` |
+| `build` | preflight | `environment: release` 审批；`uv build`；版本等于 tag；生成 `SHA256SUMS`；ubuntu 安装冒烟 |
+| `smoke` | build | matrix：`ubuntu-latest` / `macos-latest`；`install.sh --wheel` 校验并安装，断言 `aaa --version` |
+| `draft-release` | smoke | 建草稿 Release 上传资产；不自动发布 |
 | `publish-pypi` / `publish-testpypi` | build | 后续批次启用：`uv publish`，OIDC Trusted Publishing（testPyPI 可用 token 凭据） |
 | `e2e`（可选） | 手动 | `workflow_dispatch` 且勾选 `run_e2e` 时执行，使用 repository secret |
 
-通用约束：`permissions: {}` 起步按需授予；第三方 action pin 到 commit SHA；并发按 tag 去重。
+通用约束：`permissions: {}` 起步按需授予；第三方 action pin 到 commit SHA；并发按 tag 去重且不取消；所有 checkout `persist-credentials: false`。
 
 ## 七、凭据
 

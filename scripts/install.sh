@@ -64,6 +64,37 @@ fi
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/aaa-install.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT INT TERM
+SUMS=""
+
+verify_checksum() {
+    sums="$1"
+    wheel="$2"
+    name=$(basename "$wheel")
+    if [ ! -s "$sums" ]; then
+        echo "SHA256SUMS 缺失或为空：$sums" >&2
+        exit 1
+    fi
+    line=$(grep -E "  ${name}$" "$sums" || true)
+    if [ -z "$line" ]; then
+        echo "SHA256SUMS 不包含 $name" >&2
+        exit 1
+    fi
+    dir=$(dirname "$wheel")
+    if command -v sha256sum >/dev/null 2>&1; then
+        ( cd "$dir" && printf '%s\n' "$line" | sha256sum -c - ) || {
+            echo "校验失败：$name" >&2
+            exit 1
+        }
+    elif command -v shasum >/dev/null 2>&1; then
+        ( cd "$dir" && printf '%s\n' "$line" | shasum -a 256 -c - ) || {
+            echo "校验失败：$name" >&2
+            exit 1
+        }
+    else
+        echo "缺少 sha256sum 或 shasum，无法校验" >&2
+        exit 1
+    fi
+}
 
 if [ -z "$WHEEL" ]; then
     TAG="$VERSION"
@@ -83,11 +114,25 @@ if [ -z "$WHEEL" ]; then
     URL="https://github.com/$REPO/releases/download/$TAG/amaterasu_agno_agent-$VER-py3-none-any.whl"
     echo "下载 $URL"
     curl -fsSL --retry 3 -A "aaa-install/0.1" -o "$WHEEL" "$URL"
+    SUMS="$TMP/SHA256SUMS"
+    SUMS_URL="https://github.com/$REPO/releases/download/$TAG/SHA256SUMS"
+    echo "下载 $SUMS_URL"
+    curl -fsSL --retry 3 -A "aaa-install/0.1" -o "$SUMS" "$SUMS_URL"
+else
+    if [ -f "$(dirname "$WHEEL")/SHA256SUMS" ]; then
+        SUMS="$(dirname "$WHEEL")/SHA256SUMS"
+    fi
 fi
 
 if [ ! -f "$WHEEL" ]; then
     echo "wheel 不存在: $WHEEL" >&2
     exit 1
+fi
+
+if [ -n "$SUMS" ]; then
+    verify_checksum "$SUMS" "$WHEEL"
+else
+    echo "警告：未找到 SHA256SUMS，跳过 wheel 校验" >&2
 fi
 
 UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-60}"
