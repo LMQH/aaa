@@ -21,12 +21,10 @@ import argparse
 import json
 import os
 import random
-import shutil
 import string
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -166,7 +164,7 @@ def p01_tool_read():
         return "FAIL", f"exit={code} stderr={err.strip()[:200]}"
     if mark not in out:
         return "FAIL", f"输出未包含标记 {mark}：{out.strip()[:200]}"
-    return "PASS", f"工具读取命中标记，exit=0"
+    return "PASS", "工具读取命中标记，exit=0"
 
 
 @case("P0.2 真实写入（danger-full-access）")
@@ -261,7 +259,7 @@ def p05_json_events():
 @case("P0.6 错误路径（坏 key）")
 def p06_bad_key():
     cfg = load_base_config()
-    cfg["providers"]["tokenhub"]["api_key"] = "sk-invalid-0000000000000000000000000000"
+    cfg["providers"]["tokenhub"]["api_key"] = "invalid-key"
     home, work = make_home(cfg), Path(tempfile.mkdtemp(prefix="aaa-ws-"))
     code, out, err = run_cli(["-p", "只回复 ok"], home, work, timeout=180)
     if code == 0:

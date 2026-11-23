@@ -70,6 +70,13 @@ packages = ["src/aaa", "src/miniviking"]
 [tool.hatch.build.targets.wheel.force-include]
 "docs/extending" = "aaa/builtin_skills/create-extension/references"
 
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# 起步只上 lint：语法/未定义/未使用/import 顺序；format 与 UP/B 暂不启用。
+select = ["E4", "E7", "E9", "F", "I"]
+
 [tool.uv]
 # 开发环境沿用源码入口；独立 wheel 由 uv build 构建。
 package = false

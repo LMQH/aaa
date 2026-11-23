@@ -1,0 +1,29 @@
+name: dependency audit
+
+# 每周审计锁定依赖的已知漏洞；不阻断日常 push/PR。
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          python-version: "3.13"
+      - name: Export locked runtime requirements
+        run: uv export --frozen --all-extras --no-dev --no-hashes --no-emit-project > requirements-audit.txt
+      - name: pip-audit
+        # 工具本身不锁；被审计的依赖集由 uv.lock 固定。
+        # PYSEC-2026-2447：diskcache 5.6.3，经 llama-cpp-python 的可选 embedding extra 传递。
+        # 攻击前提是能写缓存目录；缓存目录必须用户私有（见 src/miniviking/DESIGN.md）。
+        # 上游暂无修复版本，先显式接受；llama-cpp-python 更新后复评。
+        run: uvx pip-audit -r requirements-audit.txt --ignore-vuln PYSEC-2026-2447

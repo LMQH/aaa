@@ -9,6 +9,12 @@
 - 为什么现在不做：它与「锁文件以当前实测版本为准」直接冲突——开启后解析会拒绝当前基线里的新包，锁结果偏离已验证环境。
 - 升级动作一并约定：改 `pyproject.toml` 的 `==` → `uv lock` → `uv sync --frozen` → 重跑 `tests/e2e.py` 全套；重点确认 agno 的 `MemoryManager(model=, db=)`、`CodingTools`、`RunPausedEvent`/`continue_run` 三个面没变。
 
+## 类型检查（pyright / basedpyright）暂不上
+
+- 触发：需要全仓静态类型门时再评估。
+- 做法：优先 `basedpyright`（pyright 1.1.414 的社区分支）；先只检查 `config`/`model`/`boundary`，basic 模式 + baseline，不阻断老代码。
+- 为什么现在不做：`basedpyright src/aaa` 实测 65 个文件、448 errors / 3523 warnings；当前注解与 Agno 动态对象导致噪声远大于收益。
+
 ## 演进终点：成为 goal agent
 
 **根本实现为 Agno**：所有方案以 Agno 3.1.12+ 生态为宿主，优先复用其原生机制（AgentOS 调度与后台任务、HITL 暂停续跑、tools 控制面、LearningMachine），自建只落在 Agno 的已证缺口处（Boundary 统一策略源、停止规则语义、结论性记忆、goal 契约）；不引入 Agno 之外的新组件承载已有机制。
