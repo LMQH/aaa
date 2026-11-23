@@ -1,0 +1,86 @@
+name: release
+
+# 只响应已推送的 tag；tag 必须经 owner 确认后人工创建并推送（AGENTS.md 授权与决定权）。
+# CI 不创建、不移动 tag，也不发布 Release：只构建、校验并生成草稿，发布由 owner 决定。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在且经 owner 确认的版本 tag（如 v0.3.0）
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          python-version: "3.13"
+      - name: Resolve tag
+        run: echo "TAG=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+      - name: Build
+        run: uv build
+      - name: Verify version equals tag
+        run: |
+          version=$(unzip -p dist/*.whl '*/METADATA' | sed -n 's/^Version: //p')
+          test "$version" = "${TAG#v}" || { echo "版本 $version 与 tag $TAG 不一致"; exit 1; }
+      - name: Checksums
+        run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
+      - name: Install smoke (ubuntu)
+        run: |
+          uv tool install --force dist/*.whl
+          aaa --version
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          python-version: "3.13"
+      - name: Build and install
+        run: |
+          uv build
+          uv tool install --force dist/*.whl
+          aaa --version
+
+  draft-release:
+    needs: smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          python-version: "3.13"
+      - name: Resolve tag
+        run: echo "TAG=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+      - name: Build
+        run: uv build
+      - name: Checksums
+        run: cd dist && sha256sum *.whl *.tar.gz > SHA256SUMS
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" --draft --title "$TAG" --generate-notes \
+            dist/*.whl dist/*.tar.gz scripts/install.sh dist/SHA256SUMS

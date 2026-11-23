@@ -1,0 +1,30 @@
+name: ci
+
+# push / PR：离线全量回归。不跑真实渠道 e2e（需要密钥与费用），不做构建。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          enable-cache: true
+          python-version: "3.13"
+      - name: Sync
+        run: uv sync --frozen --extra embedding   # 语义检索测试需要 embedding 增强组
+      - name: Offline regression
+        run: ./tests/run.sh

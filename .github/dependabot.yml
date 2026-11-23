@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # agno 是实测基线，升级须按 AGENTS「升级显式进行」重跑 uv lock 与真实渠道 e2e，不接受自动 PR。
+    ignore:
+      - dependency-name: "agno"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
