@@ -3,7 +3,7 @@
 # 用法：sh install.sh [--version vX.Y.Z] [--wheel 路径] [--mirror cn|tuna|aliyun] [--index-url URL]
 set -eu
 
-REPO="LMQH/AAA"
+REPO="LMQH/aaa"
 PACKAGE="amaterasu-agno-agent"
 VERSION=""
 WHEEL=""

@@ -1,6 +1,6 @@
 # aaa
 
-[![ci](https://github.com/LMQH/AAA/actions/workflows/ci.yml/badge.svg)](https://github.com/LMQH/AAA/actions/workflows/ci.yml)
+[![ci](https://github.com/LMQH/aaa/actions/workflows/ci.yml/badge.svg)](https://github.com/LMQH/aaa/actions/workflows/ci.yml)
 
 aaa 是一个基于 [Agno](https://github.com/agno-agi/agno) 的中文优先终端 Agent。它的重点是：**把一次对话里跑通的做法，保存成下一次还能执行的流程。**
 

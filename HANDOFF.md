@@ -1,7 +1,7 @@
 # HANDOFF
 
 - 更新日期：2026-11-23
-- 版本控制：git（`origin` → `https://github.com/LMQH/AAA.git`），按模块提交；依赖由 `pyproject.toml` + `uv.lock` 复现。
+- 版本控制：git（`origin` → `https://github.com/LMQH/aaa.git`），按模块提交；依赖由 `pyproject.toml` + `uv.lock` 复现。
 - 当前状态：主会话由 Agno 原生 `Agent.run()` 驱动；内置委派工具在线程中运行独立 Agent、Team 或 Workflow。记忆默认关闭；通过 `/memory engine` 选择内置或外置，重启生效。配置、渠道与模型维持现有入口；依赖由 `uv.lock` 冻结。
 - 文档分工：`AGENTS.md` 维护项目要求与流程，`docs/architecture.md` 维护系统结构与跨模块约定，模块 `DESIGN.md` 维护本模块机制与不变量，`README.md` 只讲用法。
 

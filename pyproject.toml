@@ -50,9 +50,9 @@ embedding = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/LMQH/AAA"
-Repository = "https://github.com/LMQH/AAA"
-Issues = "https://github.com/LMQH/AAA/issues"
+Homepage = "https://github.com/LMQH/aaa"
+Repository = "https://github.com/LMQH/aaa"
+Issues = "https://github.com/LMQH/aaa/issues"
 
 [project.scripts]
 aaa = "aaa.cli.app:main"

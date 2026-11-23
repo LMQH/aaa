@@ -47,7 +47,7 @@ docs/release.md      # 本文
 
 ```bash
 # macOS / Linux / WSL
-curl -fsSL https://github.com/LMQH/AAA/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/LMQH/aaa/releases/latest/download/install.sh | sh
 ```
 
 | 不变量 | 拦截的故障 |

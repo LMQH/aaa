@@ -14,7 +14,7 @@ uv sync --frozen --extra embedding
 ## Issue
 
 - 使用 bug / feature 表单；写清实际行为、预期行为、复现步骤、`aaa --version` 与系统。
-- 安全漏洞不要开公开 Issue，走[私密安全公告](https://github.com/LMQH/AAA/security/advisories/new)。
+- 安全漏洞不要开公开 Issue，走[私密安全公告](https://github.com/LMQH/aaa/security/advisories/new)。
 - 维护者按 `bug`、`enhancement`、`question`、`security`、`good first issue`、`release-blocker` 人工 triage。
 
 ## PR
