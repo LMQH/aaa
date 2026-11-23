@@ -1,0 +1,27 @@
+# 依赖环境：由 uv.lock 复现，不入库
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 工具缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 运行时数据与密钥：正常位置在 ~/.aaa，这里只做仓库内兜底
+secret.yaml
+*.secret.yaml
+*.db
+*.sqlite
+*.sqlite3
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/

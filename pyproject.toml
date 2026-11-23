@@ -1,0 +1,84 @@
+[project]
+name = "amaterasu-agno-agent"
+dynamic = ["version"]
+description = "终端里的 Agno agent harness（aaa）"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.14"
+authors = [{ name = "LMQH" }]
+keywords = ["agent", "agno", "cli", "harness", "terminal"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: User Interfaces",
+]
+dependencies = [
+  # 只列 src/ 直接 import 的包；其余由 agno 的元数据提供。
+  # agno 的 openai / sqlalchemy / aiosqlite 都在 extra 里，裸 agno== 装不出可用环境。
+  "agno[openai,sqlite]==3.1.12",
+  # 压缩阈值按本地 token 计数；缺失时降级为字符数/4，中文低估 1.7–3×
+  "tiktoken==0.14.0",
+  "pyyaml==6.0.3",
+  "prompt_toolkit==3.0.53",
+  "questionary==2.1.1",
+  "mcp>=2.1.0,<3.0.0",
+  "fastmcp>=4.0.0,<5",
+  "rich==15.0.0",
+  # 让 httpx 支持 socks5/socks5h 代理（用户以 ALL_PROXY 形式配置时不再报缺包）
+  "socksio>=1.0.0",
+]
+
+[project.entry-points."aaa.memory_engines"]
+miniviking = "miniviking.aaa_adapter:ENGINE"
+
+[project.optional-dependencies]
+# BGE 系列词嵌入的本地推理：llama.cpp 跑 GGUF（与 OpenViking 同款方案，
+# 不引入 torch）；huggingface_hub 负责权重下载。未安装时 miniviking
+# 自动降级为纯关键词检索。
+embedding = [
+    "llama-cpp-python>=0.3.0",
+    "huggingface_hub>=0.34",
+    "sqlite-vec>=0.1.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/LMQH/AAA"
+Repository = "https://github.com/LMQH/AAA"
+Issues = "https://github.com/LMQH/AAA/issues"
+
+[project.scripts]
+aaa = "aaa.cli.app:main"
+
+[build-system]
+requires = ["hatchling==1.33.0", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aaa", "src/miniviking"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"docs/extending" = "aaa/builtin_skills/create-extension/references"
+
+[tool.uv]
+# 开发环境沿用源码入口；独立 wheel 由 uv build 构建。
+package = false
+# 锁文件以实测环境（2026-11-17，Python 3.13.12）为基线。下列传递依赖在纯解析时
+# 会被更新的发布版本取代，显式约束回实测版本，保证 uv.lock 与跑通测试的环境一致。
+constraint-dependencies = [
+  "openai==3.49.0",
+  "pydantic-settings==2.16.2",
+  "sqlalchemy==2.1.8",
+  "httpcore2==2.16.0",
+  "httpx2==2.16.0",
+]
