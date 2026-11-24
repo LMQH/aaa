@@ -12,7 +12,7 @@
 tools/
 ├── assemble.py          # 装配：能力名 → 工具列表；tool_names 与平台提示
 ├── builtin/             # 通用 agent 能力
-│   ├── files.py         # 文件与检索（Agno Workspace / CodingTools 的包装）
+│   ├── files.py         # 文件与检索（在 Agno Workspace 上加 aaa 的路径与检索语义）
 │   ├── processes.py     # 受管进程：前台执行 + 后台 job
 │   ├── powershell.py    # PowerShell，条件装配
 │   └── todos.py         # 任务清单（session_state）
@@ -20,7 +20,7 @@ tools/
     └── weather.py       # 天气
 ```
 
-## 工具清单（模型可见 14 个）
+## 工具清单（模型可见 15 个）
 
 ### 文件与检索（`builtin/files.py`）
 
@@ -32,7 +32,7 @@ tools/
 | `edit_file` | 精确文本替换 | 只允许唯一匹配，多处匹配报错 |
 | `move_file` | 移动或重命名 | 限定工作区根 |
 | `delete_file` | 删除 | 仅 `danger-full-access` 可见 |
-| `grep` | 正则检索，带行号 | Agno `CodingTools`：`-C` 上下文、`--include`、大小写开关；`restrict_to_base_dir=True` |
+| `grep` | 正则检索，带行号 | 与文件工具是同一个 `WorkspaceTools`：共用排除规则，默认从启动目录搜起；Python 正则，不起子进程 |
 
 ### 受管进程（`builtin/processes.py`）
 
@@ -54,8 +54,9 @@ tools/
 
 | 工具 | 作用 |
 |---|---|
-| `todo_add(items)` | 追加任务，换行或分号分隔多条 |
+| `todo_add(items, phase)` | 追加任务，换行或分号分隔多条；`phase` 指定所属阶段 |
 | `todo_list()` | 列出任务与完成状态 |
+| `todo_start(index)` | 按 1 基编号标记为进行中；原来的进行中项退回待办 |
 | `todo_done(index)` | 按 1 基编号标记完成；越界只提示，不改状态 |
 
 ### 天气（`extensions/weather.py`）
@@ -68,9 +69,9 @@ tools/
 
 | 模式 | 可见工具 |
 |---|---|
-| `read-only` | 天气、任务清单 3 个、`read_file`、`list_files`、`grep`（7 个） |
-| `workspace-write` | 上一档 + `write_file`、`edit_file`、`move_file`、`run_shell_command`、`job_output`、`job_kill`（13 个） |
-| `danger-full-access` | 上一档 + `delete_file`（14 个） |
+| `read-only` | 天气、任务清单 4 个、`read_file`、`list_files`、`grep`（8 个） |
+| `workspace-write` | 上一档 + `write_file`、`edit_file`、`move_file`、`run_shell_command`、`job_output`、`job_kill`（14 个） |
+| `danger-full-access` | 上一档 + `delete_file`（15 个） |
 
 `job_output` / `job_kill` 与 `run_shell_command` 同属 `shell` 能力，开关联动；天气与任务清单不随模式变化。
 
@@ -83,13 +84,15 @@ tools/
 - 输出超出上限时截断并加 `[output truncated]`；返回前按 `tail` 取末尾行。默认上限高于 Agno 卸载阈值，让超限结果以「信封 + 可回读全文」的形态进上下文。
 - 退出码非零时优先返回 stderr，其次 stdout，两者皆空时返回 `Error: exit code N`。
 - 后台 job id 必须是 8 位十六进制，直接用于路径拼接前先校验，防穿越。
+- 相对路径按启动目录解析，命令也在启动目录执行；根只决定文件工具的边界，三档里只有 `danger-full-access` 的根是 `/`。`build_tools(cwd=…)` 把根与启动目录分开传。
+- `grep` 与文件工具共用 Workspace 的排除规则与豁免项，跳过符号链接、二进制与超过 1 MB 的文件，单次检索 30 秒封顶。`WorkspaceTools` 依赖 Agno `Workspace._resolve` 与 `_is_excluded`，Agno 升级时由 `tests/test_tools_scope.py` 拦截变化。
 
 ## 对外接口
 
-- `weather_tool(timeout_seconds)` 按配置超时返回工具函数（`get_weather` 是它的默认实例）；`todo_add / todo_list / todo_done` 依赖 `run_context` 注入。
+- `weather_tool(timeout_seconds)` 按配置超时返回工具函数（`get_weather` 是它的默认实例）；`todo_add / todo_start / todo_list / todo_done` 依赖 `run_context` 注入。
 - `ProcessTools(base_dir, requires_confirmation_tools=[...], …上限)`；`PowerShellTools(requires_confirmation_tools=[...])` 仅在存在可执行文件时由装配点创建。
-- `build_tools(capabilities, *, root, confirm_tools=(), file_caps=None, weather_timeout=None, shell_timeout=None, shell_output_bytes=None, shell_tail=None)`：本模块唯一对外装配入口。
-- `workspace_tool(root, capabilities, file_caps=None)` 与 `grep_tool(root)`：文件类与检索类工具。
+- `build_tools(capabilities, *, root, cwd=None, confirm_tools=(), file_caps=None, weather_timeout=None, shell_timeout=None, shell_output_bytes=None, shell_tail=None)`：本模块唯一对外装配入口；`cwd` 省略时同 `root`。
+- `workspace_tool(root, capabilities, file_caps=None, confirm=(), base=None)`：文件类与检索类工具，`grep` 随 `grep` 能力装配在同一个工具对象上。Workspace 在装配 `edit` 时强制附带一句英文 edit 说明，构造参数覆盖不了，与中文指引并存。
 - `tool_names(tools)`：用于判断哪些命令提示适用；提示词资源由 `runtime` 维护。
 - 失败语义：所有工具都以文本返回错误，不抛异常——模型据此自行继续或说明。
 

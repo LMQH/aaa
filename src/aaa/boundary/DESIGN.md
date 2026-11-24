@@ -12,6 +12,7 @@
 - `workspace-write`：再加 `write`/`edit`/`move`/`shell`；shell 每次执行需确认。
 - `danger-full-access`：再加 `delete`/`powershell`；shell 不需确认，文件根为 `/`。
 - 文件根：前两档是 cwd，`danger-full-access` 是 `/`。
+- 命令工作目录与相对路径的解析起点三档都是启动目录（`Isolation.command_cwd`，由 `runtime.tools_for_mode` 交给工具装配）；根只决定文件工具能触达的范围。
 - 默认模式来自配置 `boundary.default_mode`（`restart` 生效）；模块内不保留默认模式常量。
 - 提示词描述的能力由 `tool_names()` 从实际装配结果展开，不手写工具清单。
 

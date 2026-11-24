@@ -2,7 +2,7 @@
 
 契约（两个面之间唯一共享的词汇）：
 - 能力名：`read` / `list` / `write` / `edit` / `move` / `delete` / `grep` / `shell` / `powershell`。
-- 调用方给出：允许的能力集合、文件根、需要人工确认的工具名。
+- 调用方给出：允许的能力集合、文件根、启动目录、需要人工确认的工具名。
 本模块不 import `boundary`：它不知道权限模式，也不知道谁决定这些参数。
 合并策略与能力的职责在 `runtime`。
 """
@@ -10,7 +10,7 @@
 from pathlib import Path
 from typing import Collection, Dict, List, Optional
 
-from .builtin.files import grep_tool, workspace_tool
+from .builtin.files import workspace_tool
 from .builtin.powershell import PowerShellTools, find_powershell
 from .builtin.processes import ProcessTools
 from .builtin.todos import todo_add, todo_done, todo_list, todo_start
@@ -21,6 +21,7 @@ def build_tools(
     capabilities: Collection[str],
     *,
     root: Path,
+    cwd: Optional[Path] = None,
     confirm_tools: Collection[str] = (),
     file_caps: Optional[Dict[str, int]] = None,
     weather_timeout: Optional[int] = None,
@@ -32,7 +33,8 @@ def build_tools(
 
     Args:
         capabilities: 允许的能力名集合；未列出的能力不会出现在 schema 里。
-        root: 文件类工具的工作区根。
+        root: 文件类工具的工作区根（边界）。
+        cwd: 启动目录——相对路径的解析起点、grep 的默认起点、命令的工作目录；省略时同 `root`。
         confirm_tools: 需要人工确认的工具名（当前只有命令类工具需要）。
         file_caps / weather_timeout / shell_timeout / shell_output_bytes /
         shell_tail: 数值上限，来自 `config.toml`；省略时用各模块默认值。
@@ -44,15 +46,13 @@ def build_tools(
     tools.append(workspace_tool(
         root, capabilities, file_caps,
         confirm=[alias for name, alias in FILE_CONFIRM if name in confirms],
+        base=cwd,
     ))
-
-    if "grep" in capabilities:
-        tools.append(grep_tool(root))
 
     if "shell" in capabilities:
         tools.append(
             ProcessTools(
-                base_dir=root,
+                base_dir=cwd if cwd is not None else root,
                 timeout_seconds=shell_timeout,
                 max_output_bytes=shell_output_bytes,
                 default_tail=shell_tail,

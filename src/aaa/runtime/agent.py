@@ -38,6 +38,7 @@ def tools_for_mode(mode: str, settings: SettingsLike, policy: PolicySource = res
     return build_tools(
         resolved.capabilities,
         root=resolved.isolation.file_root,
+        cwd=resolved.isolation.command_cwd,
         confirm_tools=resolved.confirm_tools,
         file_caps={
             "max_file_lines": int(settings.get("tools.file_max_lines")),
