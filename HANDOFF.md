@@ -13,7 +13,7 @@
 - `model/provider` — `Channel` / `ChannelModel` 值对象、`API_CLASSES`、模型构造。
 - `model/catalog` — 绑定 settings 的渠道目录：`require` / `scope` / `resolve` / `window` / `build` / `fallbacks`。
 - `runtime/agent` — `build_agent`、`tools_for_mode`、记忆与主 Agent 装配。
-- `runtime/prompt` 与 `runtime/prompts` — 内置中文指令、`SYSTEM.md` / `APPEND_SYSTEM.md` 覆盖与技能目录披露。
+- `runtime/prompt` 与 `runtime/prompts` — 内置中文指令：基础指令、权限模式说明与按工具裁剪的工具指引，`SYSTEM.md` / `APPEND_SYSTEM.md` 覆盖；技能索引由 Agno skills 原生注入。
 - `runtime/logging_setup` — 日志落盘、轮转与库大小告警。
 - `runtime/delegation*` — [委派](docs/delegation-design.md)的定义注册、发现、原生执行和确认保存；不承担主会话。
 - `context/params` — 历史轮数、摘要预算与压缩阈值。
@@ -23,7 +23,7 @@
 - `memory` — 外置协议、发现与宿主；应用持有一个外置实例，内置不属于插件。
 - `../miniviking` — 随 aaa 分发的外置记忆引擎（独立包）：文件树事实源、SQLite 派生索引、LLM 蒸馏与持久任务队列；经 `aaa.memory_engines` 入口点接入，机制见 `src/miniviking/DESIGN.md`。
 - `usage` — 读 Agno metrics，写独立 `usage.db` 账本。
-- `sessions/query` 与 `sessions/index` — 会话查询、标题与目录→会话索引。
+- `sessions/query`、`sessions/index` 与 `sessions/fork` — 会话查询、标题、目录→会话索引与会话分叉。
 - `todo_contract` — TODO 条目契约，tools 与 CLI 共用。
 - `plugins` — 命令模板、技能、MCP 插件的发现与启停。
 - `cli/{args,app,state,run,ui,completer,commands,controller,render,diff,git_status,banner,key_input,tool_details}` — 入口、调度、渲染、输入适配、工具详情、事件与斜杠命令。
@@ -38,7 +38,7 @@
 - **生效方式**：`runtime` 当场重建 Agent；`immediate` 下次使用生效；`restart` 下次启动生效。非法值拒绝并保持原值；文件中的非法值回落默认并告警。
 - **记忆**：内置、外置、关闭互斥。外置只接收独立数据目录，自管配置、模型与存储；启动失败以关闭运行。重建主 Agent 不切来源、不重建外置实例。随包引擎 `miniviking` 走同一外置契约：默认继承 aaa 默认模型做后台蒸馏，模型不可用退化为机械摘要；数据在 `~/.aaa/memory/miniviking/`。
 - **记忆查看与切换**：`/memory` 空闲时显示当前记忆引擎并弹出切换菜单；`/memory engine [引擎]` 直达切换（未知引擎拒绝）。运行中只显示状态；关闭时不读旧数据。切换只保存，下次启动生效。
-- **用量账本**：`/usage` 读 `usage.db`；账本从终态 run 增量生成，按 `(渠道, 模型)` 计价，金额入账时冻结。
+- **用量账本**：`/usage` 读 `usage.db`；账本从终态 run 增量生成，按 `(渠道, 模型)` 计价，金额入账时冻结。会话分叉复制来的轮次不重复入账。
 - **后台任务**：job 状态只在进程内，有界缓冲；进程退出时 `atexit` 杀掉未结束进程组。
 - **工具与权限**：`boundary` 只授权能力名，`tools.assemble` 装配，数值上限来自配置；`update_user_memory` 由 Agno 内部注册，不受权限模式约束。
 - **模型/执行体**：模型身份是 `(provider, model_id)`；换模型、权限模式或运行相关配置会重建主 Agent，不改变当前会话 id。
@@ -46,30 +46,47 @@
 - **审批**：`boundary` 声明确认规则与签名，`cli` 负责询问、签名记忆与非交互拒绝；文件改动落盘前显示 diff。
 - **取消与续跑**：取消事件不等于完成，不伪造 `cancelled` 终态；非交互 JSON 不新增字段、退出码 130；取消失败要可见且不算取消；`continue_run` 保留 run id、事件 id 与 channel；审批前或审批中被取消都不续跑。
 - **历史**：Agno 原生历史是唯一回放来源；不提供清空上下文的命令，不伪造运行成功或自建回放层。
+- **会话分叉**：`/fork` 回到某一轮之前——当前会话整份复制成新会话，副本只保留目标轮次之前的轮次，原会话不动；同一会话内不做树状导航。
+- **打断并发出**：运行中草稿非空按 Esc，或取消后再提交消息，都登记为「停止后发送」；只在收到原生取消终态后发出，消息带打断前的请求、已发生的工具调用与新指示。
 - **非交互**：默认拒绝需确认的工具；`--allow-shell` 只放行 `run_shell_command`。
 - **启动动画**：`cli/animations/*.py` 与 `~/.aaa/animations/*.py` 同名覆盖；模块导出 `ANIMATION`（函数即 `frames(ctx)`），宿主 `cli/banner.py` 负责调度与降级；`ui.banner_animation` 切换，下次启动生效。
 
 ## 待定 / 阻塞
 
 - **沙箱**：本期不做。接入点是 `boundary.Isolation` 的声明与可替换的 `PolicySource`。
-- **隔离强度**：文件工具受工作区根约束、grep 受根目录约束；shell 只有 cwd 与审批，无路径约束。
+- **隔离强度**：文件工具与 `grep` 受工作区根约束并共用排除路径；相对路径按启动目录解析；shell 的工作目录是启动目录，只有审批，无路径约束。
 - **Team 任务依赖（上游）**：Agno 3.1.12 的 `execute_task` 完成后不自动刷新已阻塞的依赖。委派支持 `tasks`；领队在确认前置任务成功后，用 Agno 原生 `update_task_status` 刷新依赖。
-- **真实渠道覆盖**：基础闭环、真实工具、压缩、归档检索、内置记忆写入→新会话注入已通过最近一次真实渠道验收（2026-11-23）；miniviking BGE 语义检索真实端到端已通过；外部引擎经真实渠道的召回注入与 `cached_tokens` 上报仍未整体实测。
+- **真实渠道覆盖**：P0 闭环与真实工具已通过 2026-11-24 的真实渠道验收；压缩、归档检索、内置记忆写入→新会话注入已通过 2026-11-23 的验收，本次未重跑；miniviking BGE 语义检索真实端到端已通过；外部引擎经真实渠道的召回注入与 `cached_tokens` 上报仍未整体实测。
 - **物理终端**：`ESC[>4;2m` 的发出与还原、iTerm2 发出的 `ESC[27;2;13~` 与换行效果已在 PTY 实测；owner 已在本机 iTerm2 3.7.7 用物理 Shift+Enter 确认可用。macOS Terminal 不支持该协议，仍需终端侧映射。
 - **发布**：发版门已就绪（`scripts/release.py` 人建 tag、手动 dispatch、`environment: release` 审批、草稿 Release）；尚未发版。PyPI/testPyPI 尚未实现。
 - **平台**：Windows 的 PowerShell 与后台任务分支未实跑。
 - **首次发版**：尚未创建 tag/Release；`release.py tag` 的完整成功路径未跑（会创建真实 tag），早期检查与 pre-push 兜底已验证。
+- **e2e 的 P1 用例写死了 `tokenhub`**：`tests/e2e.py` 的 P1.7、P1.8 只改 tokenhub 渠道的窗口，默认渠道是 deepseek 时压缩不会触发；P0.6 已改为取默认渠道。
 
 ## 下一步
 
-1. 首次正式发版：owner 确认版本 → `scripts/release.py tag` → 手动 dispatch + environment 审批 → 草稿发布。
-2. testPyPI 演练 → PyPI Trusted Publishing。
-3. 外部引擎（miniviking）真实召回与 `cached_tokens` 上报核实。
-4. 物理终端键位矩阵与单会话全路径贯通实测。
+按优先级排列；前两项方向已定，后四项是不急的既有欠账。
+
+1. 扩展协议：边界已定（见 `docs/architecture.md`）。先定最小稳定面——事件订阅，注册工具、命令、提示词块、面板；接口一旦有人用就改不动，动工前先过一遍接口面。
+2. 终端呈现升级（择期讨论）：可选全屏模式、图片协议、鼠标、Mermaid 与公式渲染、组件库。
+3. 首次正式发版：owner 确认版本 → `scripts/release.py tag` → 手动 dispatch + environment 审批 → 草稿发布。
+4. testPyPI 演练 → PyPI Trusted Publishing。
+5. 外部引擎（miniviking）真实召回与 `cached_tokens` 上报核实。
+6. 物理终端键位矩阵与单会话全路径贯通实测。
 
 ## 当前验证证据
 
 按工作线分组，只保留最新证据；历史批次在版本控制记录中。
+
+### 会话分叉、打断并发出、中文提示词与工具作用范围（2026-11-24）
+
+- 环境：macOS arm64，`.venv` Python 3.13，agno 3.1.12，HEAD `e0d3412` + 本线未提交改动；PTY 110×34，`TERM=xterm-256color`，临时 HOME，渠道指向本地慢速流式假端点；真实渠道验收用默认渠道 `deepseek/deepseek-flash`，临时 HOME，保留 HTTPS 代理。
+- 命令与步骤：`./tests/run.sh`；`tests/e2e.py --suite p0`（真实渠道）；伪终端里用 `-r` 续接预置三轮的会话，执行 `/fork` → ↓ → Enter，在预填的草稿上补字后回车，流式输出期间输入一句话并按 Esc；改错验证 5 处（不传启动目录、先列完整棵树、grep 不做排除、去掉相对路径解析、`list_files` 不换算路径）。
+- 预期依据：`src/aaa/cli/DESIGN.md`「打断并发出」「会话分叉」两节，`src/aaa/sessions/DESIGN.md`，`src/aaa/runtime/DESIGN.md` 提示词一条，`src/aaa/tools/DESIGN.md` 与 `src/aaa/boundary/DESIGN.md` 里关于作用范围的条目。
+- 结果：离线回归 388 项 OK（9.8 秒）。三个权限模式下命令都在启动目录执行，全权限档的相对路径按启动目录解析，`list_files` 给出的路径能原样传回其他工具；`grep` 搜不到 `.env`、`node_modules` 下的内容，豁免项照常可搜。`/fork` 列出三轮，选中第 2 轮后提示「已分叉到会话 …，回到第 2 轮之前」，草稿预填原句；新会话里模型收到的上下文只有第 1 轮与新的提问。运行中按 Esc 后提示「已请求打断，运行确认取消后立即发送」，确认取消后自动发出；后一次请求的最后一条用户消息带打断前的请求与新指示，历史里没有被取消的那一轮。提示词按工具裁剪，用假模型实际装配三种权限模式，系统消息各段齐全、`<cwd>` 正确、无重复；workspace-write 全量装配约 2,500 字符。真实渠道 P0 11/11（26 秒）。改错验证 5 处全部被测试抓到。
+- 证据位置：本节与 `tests/run.sh`、`tests/e2e.py --suite p0` 的输出；`tests/test_session_fork.py`、`tests/test_cli_interrupt.py`、`tests/test_prompt_assembly.py`、`tests/test_tools_scope.py`。
+- 未覆盖：Windows；压缩记录较多的长会话分叉；审批待决与打断相邻的路径只有单测；P1（压缩、归档检索）未在真实渠道重跑；分叉、打断与提示词三项没有独立 QA 结论。
+- 独立 QA：分叉与打断（`QaForkInterrupt` 37 分钟）、提示词（`QaZhPrompts` 29 分钟）两个只读 QA 任务按 owner 要求中止，未出结论，以主 Agent 的自测证据交付；提示词 QA 中止前的有效发现是 grep 不受排除路径约束，已修复。工具作用范围的修复由 `QaScopeFixes` 验收（3 分 36 秒，受审修订 HEAD `e0d3412` + 工作区）：三项 PASS；发现 1 项低级缺陷——全权限档 `list_files` 的路径不能原样回读——已修复并补测试。
 
 ### 技能装配移交 Agno（2026-11-24）
 
