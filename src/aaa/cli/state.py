@@ -86,6 +86,8 @@ class AppState:
     delegation: DelegationRegistry = field(default_factory=lambda: DelegationRegistry(DELEGATIONS_DIR))
     # 项目级扩展的加载摘要；仅交互启动时打印一行。
     project_note: str = ""
+    # 交互报告收集器：非 None 时命令把（文本, 样式）追加到这里而不是打印。
+    report_lines: Optional[List] = None
 
     @classmethod
     def start(cls, config: Dict, settings: Settings) -> "AppState":

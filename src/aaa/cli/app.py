@@ -1,6 +1,7 @@
 """REPL 入口与命令行分派：交互走 REPL，非交互单轮执行后退出。"""
 
 import asyncio
+import io
 import json
 import logging
 import os
@@ -9,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from contextlib import closing
+from contextlib import closing, redirect_stdout
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -31,6 +32,7 @@ from prompt_toolkit.layout import (
     Window,
 )
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.output import create_output
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import print_formatted_text
 
@@ -53,6 +55,7 @@ from ..sessions.query import (
 from ..todo_contract import normalize
 from ..usage.cost import cost_of
 from . import banner as banner_view
+from . import report as report_panel
 from .args import Options, parse_args
 from .commands import configure, handle_command, show_memory_status
 from .controller import Controller
@@ -66,6 +69,7 @@ from .ui import (
     COMMANDS,
     EDITOR_PROMPT,
     GLYPH,
+    completion_rows,
     editor_status,
     ellipsize,
     reset_cursor_color,
@@ -289,7 +293,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             return
 
     project = plugins.project_dirs() if settings.get("project.enabled") else None
-    trusted = trust_mod.ensure(project, interactive=options.interactive)
+    trusted = trust_mod.ensure(project, interactive=options.interactive, always=options.trust_repo)
 
     try:
         state = AppState.start(config, settings)
@@ -302,6 +306,25 @@ def main(argv: Optional[List[str]] = None) -> None:
     finally:
         state.close_memory()
         clear_credentials(state.runnable)
+
+
+def _completion_float(container):
+    """找到 PromptSession 自带的补全浮层，换成自建渲染前先把它关掉。"""
+    from prompt_toolkit.layout import FloatContainer
+    from prompt_toolkit.layout.menus import CompletionsMenu, MultiColumnCompletionsMenu
+
+    if isinstance(container, FloatContainer):
+        for item in container.floats:
+            content = item.content
+            while isinstance(content, ConditionalContainer):
+                content = content.content
+            if isinstance(content, (CompletionsMenu, MultiColumnCompletionsMenu)):
+                return item
+    for child in container.get_children():
+        found = _completion_float(child)
+        if found is not None:
+            return found
+    return None
 
 
 def _run_application(
@@ -350,6 +373,7 @@ def _run_application(
             compact_at=compact_threshold(window, settings) if state.context_tokens is not None else 0,
             bar_min=int(settings.get("ui.bar_min_width")),
             bar_max=int(settings.get("ui.bar_max_width")),
+            mode=state.mode,
         ))
 
     if sys.stdout.isatty() and settings.get("ui.banner_enabled"):
@@ -459,7 +483,7 @@ def _run_application(
             elif controller.busy:
                 text = "Esc 打断"
             else:
-                text = f"Shift+Tab 切换权限 · {state.mode}"
+                text = "Shift+Tab 切换权限"
             return FormattedText([("class:status.hint", " " + text)])
 
         def invalidate() -> None:
@@ -603,8 +627,16 @@ def _run_application(
             elif not controller.busy:
                 event.app.exit(exception=EOFError())
 
+        cli_output = create_output()
+        depth = banner_view._color_depth(cli_output)
+        if depth is not None:
+            try:
+                cli_output.default_color_depth = depth
+            except AttributeError:
+                pass
         session = PromptSession(
             input=terminal_input,
+            output=cli_output,
             history=FileHistory(str(HISTORY_FILE)),
             auto_suggest=AutoSuggestFromHistory(),
             completer=state.completer,
@@ -617,6 +649,30 @@ def _run_application(
         )
         editor = session.layout.current_window
         completion_open = Condition(lambda: session.default_buffer.complete_state is not None)
+        builtin_menu = _completion_float(session.layout.container)
+        if builtin_menu is not None:
+            # 自建菜单替换自带浮层：需要指针、对齐列与滚动条。
+            builtin_menu.content = Window(FormattedTextControl(lambda: FormattedText([])), height=0)
+
+        def menu_rows():
+            complete_state = session.default_buffer.complete_state
+            if complete_state is None or not complete_state.completions:
+                return []
+            return completion_rows(
+                complete_state.completions,
+                complete_state.complete_index,
+                session.app.output.get_size().columns,
+                int(settings.get("ui.completion_rows")),
+            )
+
+        def menu_text():
+            rows = menu_rows()
+            fragments = []
+            for index, row in enumerate(rows):
+                fragments.extend(row)
+                if index < len(rows) - 1:
+                    fragments.append(("", "\n"))
+            return FormattedText(fragments)
 
         @kb.add("pageup", filter=completion_open & ~details_open & ~approval_filter)
         def _(event) -> None:
@@ -630,28 +686,16 @@ def _run_application(
             size = session.app.output.get_size()
             above = 1 + bool(activity()) + (3 if controller and controller.approval else 0)
             # Leave a terminal line outside the active area; long drafts scroll in the editor.
-            available = max(1, size.rows - above - 1)
+            available = max(1, size.rows - above - 1 - len(menu_rows()))
             draft_rows = editor.content.preferred_height(
                 max(1, size.columns), available, wrap_lines=True, get_line_prefix=editor.get_line_prefix,
             ) or 1
             return draft_rows, available - draft_rows
 
-        def reserve_completion_rows(app) -> None:
-            draft_rows, remaining = layout_rows()
-            completions = session.default_buffer.complete_state
-            # Reserve room only while the floated completion menu is visible.
-            menu_rows = (
-                min(len(completions.completions), (remaining + 1) // 2)
-                if completions and app.layout.has_focus(session.default_buffer) else 0
-            )
-            session.reserve_space_for_menu = draft_rows + menu_rows if menu_rows else 0
-
-        session.app.before_render += reserve_completion_rows
         session.app.before_render += lambda app: sync_approval()
 
         def pane_rows() -> int:
-            draft_rows, remaining = layout_rows()
-            return max(0, remaining - max(0, session.reserve_space_for_menu - draft_rows))
+            return max(0, layout_rows()[1])
 
         def detail_height():
             if not tool_details.expanded:
@@ -719,8 +763,15 @@ def _run_application(
             ),
             filter=~is_done,
         )
+        menu_view = ConditionalContainer(
+            Window(FormattedTextControl(menu_text), height=lambda: len(menu_rows()), wrap_lines=False),
+            filter=~is_done & completion_open,
+        )
         session.layout.container = HSplit(
-            [todo_view, detail_view, approval_view, activity_view, status_view, session.layout.container],
+            [
+                todo_view, detail_view, approval_view, activity_view, status_view,
+                session.layout.container, menu_view,
+            ],
             align=VerticalAlign.TOP,
         )
 
@@ -783,6 +834,33 @@ def _run_application(
             controller.start(worker)
 
 
+        def is_report(text: str) -> bool:
+            """只读报告命令：输出进面板，不写滚动历史。"""
+            if text in ("/help", "/todos", "/skills", "/insight", "/trust"):
+                return True
+            name = text[1:].split(None, 1)[0] if text.startswith("/") else ""
+            return name == "usage"
+
+        def run_report(text: str) -> bool:
+            buffer = io.StringIO()
+            state.report_lines = []
+            try:
+                with redirect_stdout(buffer):
+                    handled = handle_command(state, text)
+                collected = state.report_lines or []
+            finally:
+                state.report_lines = None
+            lines = collected or buffer.getvalue().rstrip("\n").split("\n")
+            if handled and lines and lines != [""] and sys.stdout.isatty():
+                try:
+                    report_panel.show(text, lines, settings.get("ui.theme"))
+                    return handled
+                except Exception:
+                    logger.exception("report panel failed")
+            for item in lines:
+                print(item[0] if isinstance(item, tuple) else item)
+            return handled
+
         def dispatch(text: str, from_queue: bool = False) -> None:
             text = text.strip()
             if not text:
@@ -796,16 +874,10 @@ def _run_application(
                 controller.request_exit()
                 return
             if controller.busy:
-                if text == "/todos":
-                    handle_command(state, "/todos")
-                elif text in ("/help", "/skills") or text == "/usage" or text.startswith("/usage "):
-                    handle_command(state, text)
+                if is_report(text):
+                    run_report(text)
                 elif text == "/memory":
                     show_memory_status(state)
-                elif text == "/insight":
-                    handle_command(state, text)
-                elif text == "/trust":
-                    handle_command(state, text)
                 elif not text.startswith("/") or (name in state.plugin_commands and name not in builtin):
                     controller.enqueue(text)
                 else:
@@ -813,7 +885,8 @@ def _run_application(
                 return
 
 
-            if handle_command(state, text):
+            handled = run_report(text) if is_report(text) else handle_command(state, text)
+            if handled:
                 session.completer = state.completer
                 return
             if name in state.plugin_commands:

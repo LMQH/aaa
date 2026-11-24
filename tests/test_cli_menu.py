@@ -4,12 +4,22 @@ import unittest
 
 import questionary
 from prompt_toolkit.application import create_app_session
+from prompt_toolkit.completion import Completion
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.styles import merge_styles
+from prompt_toolkit.styles.defaults import default_ui_style
 
 from aaa.cli import picker
 from aaa.cli.commands import _animation_items, _ask_menu
-from aaa.cli.ui import display_width
+from aaa.cli.ui import (
+    COMMANDS,
+    ICONS,
+    completion_rows,
+    display_width,
+    report_lines,
+    style_for,
+)
 
 
 class PickerTests(unittest.TestCase):
@@ -106,3 +116,81 @@ class AsyncMenuTest(unittest.IsolatedAsyncioTestCase):
                 question = questionary.select("选择", choices=["first", "second"])
                 source.send_text(key)
                 self.assertIsNone(_ask_menu(question))
+
+
+class CompletionRowsTest(unittest.TestCase):
+    """补全菜单：指针、对齐列与滚动条。"""
+
+    def _items(self, count=3):
+        return [
+            Completion(f"/cmd{index}", start_position=0, display_meta=f"说明{index}")
+            for index in range(count)
+        ]
+
+    def _plain(self, rows):
+        return ["".join(text for _, text in row) for row in rows]
+
+    def test_pointer_marks_current_row_and_meta_column_lines_up(self):
+        rows = completion_rows(self._items(), 1, 60, 10)
+        plain = self._plain(rows)
+        self.assertTrue(plain[1].startswith("❯ "))
+        self.assertFalse(plain[0].startswith("❯"))
+        self.assertEqual(len({line.index("说明") for line in plain}), 1)
+
+    def test_rows_fill_the_width_and_carry_a_scrollbar(self):
+        rows = completion_rows(self._items(30), 25, 80, 10)
+        self.assertEqual(len(rows), 10)
+        for row in rows:
+            self.assertEqual(display_width("".join(text for _, text in row)), 80)
+        self.assertTrue(self._plain(rows)[-1].startswith("❯ "))
+        self.assertIn("█", [row[-1][1] for row in rows])
+
+    def test_without_a_selection_no_row_gets_the_pointer(self):
+        rows = completion_rows(self._items(), None, 60, 10)
+        self.assertFalse(any(text.startswith("❯") for _, text in rows[0]))
+
+    def test_selected_row_uses_color_not_reverse_video(self):
+        # prompt_toolkit 自带样式给 completion.current 加了 reverse；必须显式关掉。
+        for theme in ("default", "contrast", "neon"):
+            with self.subTest(theme=theme):
+                merged = merge_styles([default_ui_style(), style_for(theme)])
+                attrs = merged.get_attrs_for_style_str("class:completion-menu.completion.current")
+                self.assertFalse(attrs.reverse)
+                self.assertEqual(attrs.bgcolor, "default")
+                self.assertTrue(attrs.bold)
+
+class CommandIconTest(unittest.TestCase):
+    def test_every_command_has_an_icon_outside_ascii_mode(self):
+        if not ICONS:
+            self.skipTest("ASCII 模式不显示图标")
+        missing = [name for name, _ in COMMANDS if name not in ICONS]
+        self.assertEqual(missing, [])
+        self.assertTrue(all(len(icon.strip()) > 0 for icon in ICONS.values()))
+
+class ReportLinesTest(unittest.TestCase):
+    def _plain(self, rows):
+        return ["".join(text for _, text in row) for row in rows]
+
+    def test_panel_has_title_borders_and_footer_at_exact_width(self):
+        rows = self._plain(report_lines("/trust", ["一", "二"], 0, 60, 10))
+        self.assertEqual(len(rows), 10)
+        for line in rows:
+            self.assertEqual(display_width(line), 60)
+        self.assertIn("/trust", rows[0])
+        self.assertTrue(rows[0].startswith("╭"))
+        self.assertTrue(rows[-1].startswith("╰"))
+        self.assertIn("Esc 关闭", rows[-2])
+
+    def test_scroll_clamps_and_footer_shows_range(self):
+        lines = [f"第 {index} 行" for index in range(40)]
+        rows = self._plain(report_lines("/usage", lines, 0, 80, 12))
+        self.assertIn("1–8/40", rows[-2])
+        rows = self._plain(report_lines("/usage", lines, 35, 80, 12))
+        self.assertIn("33–40/40", rows[-2])
+        rows = self._plain(report_lines("/usage", lines, 999, 80, 12))
+        self.assertIn("33–40/40", rows[-2])
+
+    def test_empty_lines_keep_the_frame(self):
+        rows = self._plain(report_lines("/x", [], 0, 40, 7))
+        self.assertEqual(len(rows), 7)
+        self.assertTrue(all(display_width(line) == 40 for line in rows))

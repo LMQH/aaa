@@ -16,6 +16,7 @@ import time
 import unittest
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from agno.agent import Agent
@@ -65,10 +66,9 @@ from aaa.usage.cost import cost_of, multiplier
 
 
 def output_of_usage(data) -> str:
-    buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer):
-        _print_usage(data)
-    return buffer.getvalue()
+    state = SimpleNamespace(report_lines=[])
+    _print_usage(state, data)
+    return "\n".join(text for text, _style in state.report_lines) + "\n"
 
 
 def tools_for_test(mode: str) -> list:
@@ -1166,6 +1166,23 @@ class UsageTest(unittest.TestCase):
         self.assertIn("deepseek", output_of_usage(data))
         self.assertNotIn("缓存读", output_of_usage(data))
         self.assertIn("$0.087", output_of_usage(data))
+
+    def test_usage_table_drops_rules_and_marks_unknown_price(self) -> None:
+        data = report.Report(
+            period="day",
+            start=datetime(2026, 11, 18, 0, 0),
+            end=datetime(2026, 11, 18, 12, 0),
+            rows=[report.Row(channel=None, model="mystery", input_tokens=900,
+                             output_tokens=100, unpriced=1, requests=1)],
+        )
+        state = SimpleNamespace(report_lines=[])
+        _print_usage(state, data)
+        text = "\n".join(value for value, _style in state.report_lines)
+        self.assertNotIn("----", text)
+        self.assertIn("—", text)
+        styles = [style for _value, style in state.report_lines]
+        self.assertIn("class:table.header", styles)
+        self.assertIn("class:table.total", styles)
 
 
 class UsageStatsTest(unittest.TestCase):

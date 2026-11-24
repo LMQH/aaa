@@ -29,6 +29,8 @@ class Options:
     resume: Optional[str] = None
     # 非交互模式下放行需要确认的工具（当前只有 shell）；默认拒绝。
     allow_shell: bool = False
+    # 直接信任当前仓库的项目级可执行扩展（始终），不再询问。
+    trust_repo: bool = False
     # 随消息发送的本地图片路径（可重复）。
     images: List[str] = field(default_factory=list)
 
@@ -70,6 +72,10 @@ def build_parser(default_mode: str) -> argparse.ArgumentParser:
         "--allow-shell", action="store_true",
         help="非交互模式下自动放行 shell 命令（默认拒绝）；权限模式仍需至少 workspace-write",
     )
+    parser.add_argument(
+        "--trust-repo", action="store_true",
+        help="信任当前仓库的项目级可执行扩展（始终），跳过交互确认",
+    )
     return parser
 
 
@@ -83,5 +89,6 @@ def parse_args(default_mode: str, argv: Optional[List[str]] = None) -> Options:
         continue_session=namespace.continue_session,
         resume=namespace.resume,
         allow_shell=namespace.allow_shell,
+        trust_repo=namespace.trust_repo,
         images=list(namespace.images),
     )

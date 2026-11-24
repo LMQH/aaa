@@ -29,10 +29,10 @@ from ..sessions.query import find_session, list_sessions, session_label
 from ..todo_contract import normalize
 from ..usage import ledger as usage_ledger
 from ..usage import report as usage_report
-from . import animations, picker
+from . import animations, picker, settings_view
 from .render import sanitize
 from .state import AppState
-from .ui import GLYPH, UI_STYLE, display_width, pad, print_help
+from .ui import GLYPH, UI_STYLE, display_width, emit, pad, print_help
 
 # 渠道 id：用作 `/model <id>/<model>` 的前缀，只允许小写字母、数字与连字符。
 CHANNEL_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]*")
@@ -351,7 +351,7 @@ def handle_command(state: AppState, text: str) -> bool:
         _trust_command(state, text[len("/trust"):].strip())
         return True
     if text == "/help":
-        print_help()
+        print_help(state)
         return True
 
     if text == "/session":
@@ -551,34 +551,35 @@ def _show_setting(state: AppState, path: str) -> None:
     print(f"  {state.settings.describe(path)}")
 
 
-def _apply_setting(state: AppState, path: str) -> None:
-    """落盘并按生效方式处理：runtime 重建 Agent，restart 提示下次启动。"""
+def _apply_setting(state: AppState, path: str) -> str:
+    """落盘并按生效方式处理：runtime 重建 Agent；返回一句结果提示。"""
     key = BY_PATH[path]
+    value = _format_value(state.settings.get(path))
     if key.apply == APPLY_RUNTIME:
         state.apply_settings()
-        print(f"{GLYPH['ok']} {path} = {_format_value(state.settings.get(path))}")
-    else:
-        save_settings(state.settings)
-        print(f"{GLYPH['ok']} {path} = {_format_value(state.settings.get(path))}")
-        if key.apply == APPLY_RESTART:
-            print("  该配置在下次启动时生效。")
+        return f"{path} = {value}（已生效）"
+    save_settings(state.settings)
+    return f"{path} = {value}" + ("（重启生效）" if key.apply == APPLY_RESTART else "")
 
 
-def _set_setting(state: AppState, path: str, raw: str) -> None:
+def set_setting(state: AppState, path: str, raw: str) -> tuple:
+    """校验并写入一项设置；返回 (成功, 提示)。"""
     if path == "memory.source":
-        print("记忆引擎请通过 /memory（或 /memory engine <引擎>）修改。")
-        return
+        return False, "记忆引擎请通过 /memory（或 /memory engine <引擎>）修改。"
     if path == "ui.banner_animation":
         available = set(animations.discover(_animation_dirs(state)))
         if raw not in available:
-            print(f"{GLYPH['fail']} 未知动画：{raw}（可用：{'、'.join(sorted(available))}）")
-            return
+            return False, f"未知动画：{raw}（可用：{'、'.join(sorted(available))}）"
     try:
         state.settings.set(path, raw)
     except ValueError as exc:
-        print(f"{GLYPH['fail']} {exc}")
-        return
-    _apply_setting(state, path)
+        return False, str(exc)
+    return True, _apply_setting(state, path)
+
+
+def _set_setting(state: AppState, path: str, raw: str) -> None:
+    ok, message = set_setting(state, path, raw)
+    print(f"{GLYPH['ok'] if ok else GLYPH['fail']} {message}")
 
 
 def _animation_dirs(state: Optional[AppState] = None) -> tuple:
@@ -611,75 +612,9 @@ def _choose_animation(state: AppState, *, subtitle: str = "Esc 返回"):
     )
 
 
-def _edit_setting(state: AppState, path: str, *, subtitle: str) -> Optional[object]:
-    """编辑一项设置；返回 BACK/ABORT 供上层回退，正常保存后返回 None。"""
-    key = BY_PATH[path]
-    _show_setting(state, path)
-    if path == "ui.banner_animation":
-        picked = _choose_animation(state, subtitle=subtitle)
-        if picked in (picker.BACK, picker.ABORT):
-            return picked
-        _set_setting(state, path, picked)
-        return None
-    current = _format_value(state.settings.get(path))
-    choices = list(key.choices()) if key.choices is not None else (
-        ["true", "false"] if key.kind == "bool" else []
-    )
-    if choices:
-        picked = _menu(
-            state,
-            f"{key.path} · {key.label}",
-            [picker.Item(value, value) for value in choices],
-            default=current,
-            subtitle=subtitle,
-        )
-        if picked in (picker.BACK, picker.ABORT):
-            return picked
-        raw = picked
-    else:
-        raw = _ask_value(
-            state,
-            f"{key.path} · {key.label}",
-            default=current,
-            hint=f"{state.settings.describe(path)} · Enter 保存 · Esc 返回",
-        )
-        if raw in (picker.BACK, picker.ABORT):
-            return raw
-        if not str(raw).strip():
-            return None
-    _set_setting(state, path, str(raw).strip())
-    return None
-
-
 def _config_menu(state: AppState) -> None:
-    """配置入口：分组 → 键 → 值；Esc 逐级回退，Ctrl-C 放弃整个命令。"""
-    while True:
-        group = _menu(
-            state,
-            "配置分组",
-            [picker.Item(group, group) for group in state.settings.groups()],
-            subtitle="Esc 返回输入",
-        )
-        if group in (picker.BACK, picker.ABORT):
-            return
-        while True:
-            keys = state.settings.keys_of(group)
-            items = [
-                picker.Item(
-                    key.path,
-                    f"{key.short} = {_format_value(state.settings.get(key.path))}",
-                    key.label,
-                )
-                for key in keys
-            ]
-            path = _menu(state, f"配置 · {group}", items, subtitle="Esc 返回分组")
-            if path is picker.BACK:
-                break
-            if path is picker.ABORT:
-                return
-            result = _edit_setting(state, path, subtitle="Esc 返回列表")
-            if result is picker.ABORT:
-                return
+    """打开设置面板：页签 / 分组 / 键值三级，就地改值。"""
+    settings_view.run(state, set_setting, theme=state.settings.get("ui.theme"))
 
 
 def _config_command(state: AppState, argument: str) -> None:
@@ -708,10 +643,10 @@ def _todos_command(state: AppState) -> None:
     data = state.runnable.get_session_state(session_id=state.session_id)
     todos = normalize((data or {}).get("todos"))
     if not todos:
-        print("任务清单为空。")
+        emit(state, "任务清单为空。")
         return
     done = sum(1 for item in todos if item.get("status") == "completed")
-    print(f"TODO {done}/{len(todos)}")
+    emit(state, f"TODO {done}/{len(todos)}", "bold")
     order: List[str] = []
     grouped: Dict[str, List] = {}
     for number, item in enumerate(todos, 1):
@@ -720,13 +655,20 @@ def _todos_command(state: AppState) -> None:
             order.append(phase)
             grouped[phase] = []
         grouped[phase].append((number, item))
+    marks = {"completed": "[x]", "in_progress": "[>]"}
+    styles = {
+        "completed": "class:todo.completed",
+        "in_progress": "class:todo.in_progress",
+        "pending": "class:todo.pending",
+    }
     for phase in order:
         items = grouped[phase]
         count_done = sum(1 for _, item in items if item.get("status") == "completed")
-        print(f"  {phase} {count_done}/{len(items)}")
+        emit(state, f"  {phase} {count_done}/{len(items)}", "class:table.header")
         for number, item in items:
-            mark = {"completed": "[x]", "in_progress": "[>]"}.get(item.get("status"), "[ ]")
-            print(f"    {mark} {number}. {item.get('text', '')}")
+            status = item.get("status")
+            mark = marks.get(status, "[ ]")
+            emit(state, f"    {mark} {number}. {item.get('text', '')}", styles.get(status, ""))
 
 
 # ---------------------------------------------------------------- /insight
@@ -735,40 +677,48 @@ def _todos_command(state: AppState) -> None:
 def _insight_command(state: AppState) -> None:
     """上下文分段估算；只读，不改任何状态，不弹菜单。"""
     data = insight_mod.collect(state)
-    print()
     label = _fmt_tokens(data.window) if data.window else "未知"
-    print(f"上下文洞察 · 窗口 {label}")
+    emit(state, f"上下文洞察 · 窗口 {label}", "bold")
     if data.usage:
-        print(
+        emit(
+            state,
             f"最近一轮 usage：输入 {_fmt_tokens(data.usage.get('input', 0))}"
             f" · 输出 {_fmt_tokens(data.usage.get('output', 0))}"
-            f" · 缓存读 {_fmt_tokens(data.usage.get('cached', 0))}"
+            f" · 缓存读 {_fmt_tokens(data.usage.get('cached', 0))}",
+            "class:picker.hint",
         )
-    print()
-    print(pad("#", 5) + pad("类目", 12) + pad("≈tokens", 9, right=True)
-          + pad("占比", 7, right=True) + " 来源")
+    emit(state)
+    rows = []
     total = 0
     for seg in data.segments:
         if seg.count is None:
-            tokens_text, ratio, approx = "见 1", "", ""
+            tokens_text, ratio = "见 1", ""
         else:
             total += seg.count.tokens
-            tokens_text = f"{seg.count.tokens:,}"
+            tokens_text = f"{seg.count.tokens:,}" + ("≈" if seg.count.approximate else "")
             ratio = f"{seg.count.tokens / data.window * 100:.1f}%" if data.window else "—"
-            approx = "≈" if seg.count.approximate else ""
         note = f"（{seg.note}）" if seg.note else ""
-        print(pad(seg.number, 5) + pad(seg.name, 12) + pad(tokens_text, 9, right=True)
-              + pad(ratio, 7, right=True) + f" {seg.source}{note}{approx}")
+        rows.append([seg.number, seg.name, tokens_text, ratio, f"{seg.source}{note}"])
     ratio_total = f"{total / data.window * 100:.1f}%" if data.window else "—"
-    print(pad("", 5) + pad("合计", 12) + pad(f"{total:,}", 9, right=True)
-          + pad(ratio_total, 7, right=True))
-    print()
+    _table(
+        state, ["#", "类目", "≈tokens", "占比", "来源"], rows, aligns="llrrl",
+        total=["", "合计", f"{total:,}", ratio_total, ""],
+    )
+    emit(state)
     warnings = "；".join(dict.fromkeys(data.warnings))
     suffix = f"；{warnings}" if warnings else ""
-    print(f"脚注：估算 ≈，分词器 {data.tokenizer}{suffix}")
+    emit(state, f"脚注：估算 ≈，分词器 {data.tokenizer}{suffix}", "class:picker.hint")
 
 
 # ---------------------------------------------------------------- /trust
+
+
+def _trust_value(value: str) -> str:
+    if value == trust_mod.ALWAYS:
+        return "始终"
+    if value.startswith(trust_mod.DENY_PREFIX):
+        return "已拒绝"
+    return value[:8]
 
 
 def _trust_command(state: AppState, argument: str) -> None:
@@ -782,10 +732,10 @@ def _trust_command(state: AppState, argument: str) -> None:
 
     if sub:
         if sub != "revoke":
-            print("用法：/trust 或 /trust revoke <序号|仓库路径>")
+            emit(state, "用法：/trust 或 /trust revoke <序号|仓库路径>")
             return
         if not rest:
-            print("用法：/trust revoke <序号|仓库路径>")
+            emit(state, "用法：/trust revoke <序号|仓库路径>")
             return
         roots = sorted(entries)
         target = None
@@ -803,38 +753,46 @@ def _trust_command(state: AppState, argument: str) -> None:
             else:
                 target = next((root for root in roots if root.endswith(rest)), None)
         if target is None:
-            print(f"没有这条信任记录：{sanitize(rest)}")
+            emit(state, f"没有这条信任记录：{sanitize(rest)}")
             return
         if trust_mod.revoke(target):
-            print(f"{GLYPH['ok']} 已撤销信任：{sanitize(target)}（重启生效）")
+            emit(state, f"{GLYPH['ok']} 已撤销信任：{sanitize(target)}（重启生效）")
         else:
-            print(f"没有这条信任记录：{sanitize(target)}")
+            emit(state, f"没有这条信任记录：{sanitize(target)}")
         return
 
-    print("项目信任状态：")
     if project is None:
-        print("  项目级发现已关闭（/config project.enabled）。")
+        emit(state, "项目级发现已关闭（/config project.enabled）。")
     else:
-        print(f"  仓库：{sanitize(str(project['root']))}")
-        trusted = trust_mod.trusted_kinds(project)
-        for kind in trust_mod.KINDS:
-            if not trust_mod.describe(project, kind):
-                status = "无内容"
-            elif kind in trusted:
-                status = "已信任"
-            else:
-                status = "未信任（交互启动时会询问）"
-            print(f"  {trust_mod.KIND_LABELS[kind]}：{status}")
-    print("已信任仓库：")
+        emit(state, f"项目信任 · {sanitize(str(project['root']))}", "bold")
+        emit(state)
+        labels = {
+            "empty": "无内容",
+            "always": "已信任（始终）",
+            "trusted": "已信任（当前内容）",
+            "denied": "已拒绝（当前内容，改动后会再询问）",
+            "pending": "未表态（交互启动时会询问）",
+        }
+        _table(state, ["类别", "状态"], [
+            [trust_mod.KIND_LABELS[kind], labels[trust_mod.status(project, kind)]]
+            for kind in trust_mod.KINDS
+        ])
+    emit(state)
+    emit(state, f"已信任仓库（{len(entries)}）", "bold")
     if not entries:
-        print("  无")
-    else:
-        for number, (root, kinds) in enumerate(sorted(entries.items()), 1):
-            summary = "、".join(
-                f"{trust_mod.KIND_LABELS.get(kind, kind)}:{value[:8]}"
+        emit(state, "  无")
+        return
+    _table(state, ["#", "仓库", "授权"], [
+        [
+            str(number),
+            sanitize(root),
+            "、".join(
+                f"{trust_mod.KIND_LABELS.get(kind, kind)}:{_trust_value(value)}"
                 for kind, value in sorted(kinds.items())
-            )
-            print(f"  {number}. {sanitize(root)}（{summary}）")
+            ),
+        ]
+        for number, (root, kinds) in enumerate(sorted(entries.items()), 1)
+    ], aligns="rll")
 
 
 # ---------------------------------------------------------------- /memory
@@ -1286,12 +1244,14 @@ def _source_tag(item) -> str:
 def _skills_command(state: AppState) -> None:
     """列出发现的技能；模型可用 load_skill 工具读取正文。"""
     if not state.plugin_skills:
-        print("没有发现技能。技能放在 ~/.agents/skills/<name>/SKILL.md 或仓库 .aaa/skills/<name>/SKILL.md。")
+        emit(state, "没有发现技能。技能放在 ~/.agents/skills/<name>/SKILL.md 或仓库 .aaa/skills/<name>/SKILL.md。")
         return
-    print(f"发现 {len(state.plugin_skills)} 个技能：")
-    for s in state.plugin_skills:
-        desc = s.description.splitlines()[0] if s.description else ""
-        print(f"  {s.name} {_source_tag(s)}  ·  {desc}")
+    emit(state, f"发现 {len(state.plugin_skills)} 个技能", "bold")
+    emit(state)
+    for skill in state.plugin_skills:
+        desc = skill.description.splitlines()[0] if skill.description else ""
+        emit(state, f"  {skill.name} {_source_tag(skill)}", "")
+        emit(state, f"      {desc}", "class:picker.hint")
 
 
 # ---------------------------------------------------------------- /usage
@@ -1309,14 +1269,14 @@ def _usage_command(state: AppState, argument: str) -> None:
         usage_ledger.sync(price=state.catalog.cost)
     except Exception as exc:
         print(f"{GLYPH['fail']} 用量同步失败，仅显示已有记录：{exc}")
-    _print_usage(usage_report.report(period))
+    _print_usage(state, usage_report.report(period))
 
 
-def _print_usage(data) -> None:
+def _print_usage(state: AppState, data) -> None:
     label = PERIOD_LABELS[data.period]
     span = f"{data.start:%m-%d} ~ {data.end:%m-%d}" if data.period != "day" else f"{data.start:%Y-%m-%d}"
     if not data.rows:
-        print(f"{label} {span} · 暂无记录")
+        emit(state, f"{label} {span} · 暂无记录")
         return
 
     show_cache = any(row.cache_read_tokens for row in data.rows)
@@ -1332,31 +1292,32 @@ def _print_usage(data) -> None:
         + ([_fmt_tokens(data.cache_read_tokens)] if show_cache else []) \
         + [_fmt_tokens(data.tokens), _fmt_money(data.cost)]
 
-    print()
-    print(f"{label} {span} · 用量与花费")
-    _table(headers, cells + [total], right_from=2)
+    emit(state, f"{label} {span} · 用量与花费", "bold")
+    emit(state)
+    _table(state, headers, cells, aligns="ll" + "r" * (len(headers) - 2), total=total)
     if data.unpriced:
-        print(f"  {data.unpriced} 条未定价（渠道未知或缺价），金额不含这些记录。")
-    print()
+        emit(state, f"{data.unpriced} 条未定价（渠道未知或缺价），金额不含这些记录。", "class:picker.hint")
 
 
-def _table(headers, rows, right_from: int = 0) -> None:
-    """对齐的纯文本表：前 `right_from` 列左对齐，其余右对齐；按显示宽度补齐。"""
+def _table(state: AppState, headers, rows, aligns: str = "", total=None) -> None:
+    """对齐表：`aligns` 每列一个 l/r（默认全左）；表头与合计行走主题样式。"""
+    count = len(headers)
+    aligns = aligns or "l" * count
     widths = [
-        max(display_width(row[i]) for row in [headers] + rows)
-        for i in range(len(headers))
+        max(display_width(row[i]) for row in [headers, *rows, *([total] if total else [])])
+        for i in range(count)
     ]
-    rule = "  " + "  ".join("-" * width for width in widths)
-    print("  " + "  ".join(
-        pad(cell, widths[i], right=i >= right_from)
-        for i, cell in enumerate(headers)
-    ))
-    print(rule)
+
+    def line(cells, style: str = "") -> None:
+        emit(state, "  " + "  ".join(
+            pad(cell, widths[i], right=aligns[i] == "r") for i, cell in enumerate(cells)
+        ), style)
+
+    line(headers, "class:table.header")
     for row in rows:
-        print("  " + "  ".join(
-            pad(cell, widths[i], right=i >= right_from) for i, cell in enumerate(row)
-        ))
-    print(rule)
+        line(row)
+    if total is not None:
+        line(total, "class:table.total")
 
 
 def _fmt_tokens(value: int) -> str:
@@ -1369,7 +1330,7 @@ def _fmt_tokens(value: int) -> str:
 
 def _fmt_money(value):
     if value is None:
-        return "?"
+        return "—"
     if value >= 1:
         return f"${value:.2f}"
     if value >= 0.01:

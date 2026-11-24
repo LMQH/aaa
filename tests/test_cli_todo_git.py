@@ -84,7 +84,7 @@ class EditorStatusTest(unittest.TestCase):
         self.assertTrue(wide.endswith("128k"))
         unknown = row(130, None, None)
         self.assertTrue(unknown.endswith("128k"))
-        self.assertNotIn("%", unknown)
+        self.assertIn("0%", unknown)  # 上下文条常显，未测量时按 0% 画
         self.assertNotIn("$", unknown)
         narrow = row(38, 0.0234, 32000)
         self.assertLessEqual(display_width(narrow), 38)

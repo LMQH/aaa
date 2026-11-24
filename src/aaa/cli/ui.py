@@ -54,8 +54,9 @@ GLYPH = {
     "mark": "|" if ASCII_UI else "╎",
     "title": ">" if ASCII_UI else "▸",
     "pointer": ">" if ASCII_UI else "❯",
+    "mode": ">" if ASCII_UI else "▶",
 }
-EDITOR_PROMPT = "> " if ASCII_UI else "╰─ "
+EDITOR_PROMPT = "> " if ASCII_UI else "❯ "
 
 # 命令图标：Windows 不显示图标，其余平台用最简符号。
 ICONS = {} if ASCII_UI else {
@@ -73,6 +74,8 @@ ICONS = {} if ASCII_UI else {
     "/skills": "✦",
     "/compact": "⇩",
     "/usage": "Σ",
+    "/insight": "◎",
+    "/trust": "⚿",
     "/memory": "❖",
     "/session": "▤",
     "/new": "+",
@@ -94,12 +97,14 @@ PT_STYLES = {
         "status.activity": "#e0a45b",
         "completion-menu": "bg:default",
         "completion-menu.completion": "bg:default #cfd6df",
-        "completion-menu.completion.current": "bg:default bold #42c5f5",
+        "completion-menu.completion.current": "bg:default bold #42c5f5 noreverse",
         "completion-menu.meta.completion": "bg:default #8d9bac",
         "completion-menu.meta.completion.current": "bg:default bold #42c5f5",
         "completion-menu.multi-column-meta": "bg:default #8d9bac",
         "completion-icon": "#42c5f5",
         "completion-command": "#ffffff",
+        "table.header": "bold #8d9bac",
+        "table.total": "bold #e0e5ed",
         "picker.title": "bold #42c5f5",
         "picker.subtitle": "#8d9bac italic",
         "picker.pointer": "bold #42c5f5",
@@ -127,12 +132,14 @@ PT_STYLES = {
         "status.activity": "ansiyellow bold",
         "completion-menu": "bg:default",
         "completion-menu.completion": "bg:default #ffffff",
-        "completion-menu.completion.current": "bg:default bold ansiyellow",
+        "completion-menu.completion.current": "bg:default bold ansiyellow noreverse",
         "completion-menu.meta.completion": "bg:default #bbbbbb",
         "completion-menu.meta.completion.current": "bg:default bold ansiyellow",
         "completion-menu.multi-column-meta": "bg:default #bbbbbb",
         "completion-icon": "ansiyellow bold",
         "completion-command": "#ffffff bold",
+        "table.header": "bold ansiwhite",
+        "table.total": "bold ansiyellow",
         "picker.title": "bold ansiwhite",
         "picker.subtitle": "ansiwhite italic",
         "picker.pointer": "bold ansiyellow",
@@ -160,12 +167,14 @@ PT_STYLES = {
         "status.activity": "#ff6ec7",
         "completion-menu": "bg:default",
         "completion-menu.completion": "bg:default #d8d8f0",
-        "completion-menu.completion.current": "bg:default bold #7ef9ff",
+        "completion-menu.completion.current": "bg:default bold #7ef9ff noreverse",
         "completion-menu.meta.completion": "bg:default #8a8ab0",
         "completion-menu.meta.completion.current": "bg:default bold #7ef9ff",
         "completion-menu.multi-column-meta": "bg:default #8a8ab0",
         "completion-icon": "#7ef9ff",
         "completion-command": "#ffffff",
+        "table.header": "bold #8a8ab0",
+        "table.total": "bold #e1defa",
         "picker.title": "bold #7ef9ff",
         "picker.subtitle": "#a8a6c4 italic",
         "picker.pointer": "bold #ff6ec7",
@@ -201,12 +210,23 @@ def pad(text: str, width: int, right: bool = False) -> str:
     return " " * gap + text if right else text + " " * gap
 
 
-def print_help() -> None:
-    print()
+def emit(state, text: str = "", style: str = "") -> None:
+    """报告面板挂接时收集 (文本, 样式)；未挂接（非交互/测试）时直接打印。"""
+    sink = getattr(state, "report_lines", None)
+    if sink is None:
+        print(text)
+    else:
+        sink.append((text, style))
+
+
+def print_help(state=None) -> None:
+    emit(state, "命令", "bold")
+    emit(state)
     rank = {name: i for i, name in enumerate(usage_stats.ordered([c for c, _ in COMMANDS]))}
     for command, description in sorted(COMMANDS, key=lambda e: rank[e[0]]):
-        print(f"  {command:<10}{description}")
-    print()
+        icon = ICONS.get(command, "")
+        prefix = f"{icon} " if icon else "  "
+        emit(state, f"  {prefix}{command:<10}{description}")
 
 
 def fmt_window(value: int) -> str:
@@ -234,7 +254,7 @@ def context_bar(used: int, total: int, width: int, compact_at: int = 0) -> str:
     return "".join(chars) + " " + capacity
 
 
-def editor_status(width, *, logo, model, cwd, git, cost, tokens, window, compact_at, bar_min, bar_max):
+def editor_status(width, *, logo, model, cwd, git, cost, tokens, window, compact_at, bar_min, bar_max, mode=""):
     """按可见列排版一行状态；先压缩目录，再省略辅助信息。"""
     if width < 1:
         return []
@@ -242,12 +262,13 @@ def editor_status(width, *, logo, model, cwd, git, cost, tokens, window, compact
     parts = {
         "logo": logo, "model": model, "path": cwd, "git": git.display() if git else "",
         "cost": f"${cost:.4f}" if cost is not None else "",
+        "mode": f"{GLYPH['mode']} {mode}" if mode else "",
     }
     for key in parts:
         parts[key] = sanitize(parts[key]).replace("\n", " ").replace("\t", " ")
     context = fmt_window(window) if window else ""
-    if window and tokens is not None:
-        context = f"{max(0.0, min(tokens / window, 1.0)):.0%} {context}"
+    if window:
+        context = f"{max(0.0, min((tokens or 0) / window, 1.0)):.0%} {context}"
 
     def required():
         lengths = [display_width(value) for value in parts.values() if value]
@@ -259,7 +280,7 @@ def editor_status(width, *, logo, model, cwd, git, cost, tokens, window, compact
         parts["path"] = ellipsize(parts["path"], max(min(8, path_width), path_width - overflow))
     if required() > width and git:
         parts["git"] = git.branch
-    for key in ("cost", "git"):
+    for key in ("cost", "git", "mode"):
         if required() > width:
             parts[key] = ""
     if required() > width:
@@ -278,11 +299,54 @@ def editor_status(width, *, logo, model, cwd, git, cost, tokens, window, compact
     if context:
         room = width - sum(display_width(text) for _, text in fragments)
         bar_width = min(room - 2, bar_max)
-        if tokens is not None and bar_width >= max(bar_min, len(context)):
-            context = context_bar(tokens, window, bar_width, compact_at)
+        if bar_width >= max(bar_min, len(context)):
+            context = context_bar(tokens or 0, window, bar_width, compact_at)
         fragments.append(("", " " * (room - len(context))))
         fragments.append(("class:status.context", context))
     return fragments
+
+
+def completion_rows(completions, index, columns, max_rows=10):
+    """补全菜单：指针、对齐的命令列与右侧滚动条；每行是 (style, text) 片段。"""
+    total = len(completions)
+    if not total or columns < 16:
+        return []
+    visible = max(1, min(total, max_rows))
+    start = 0
+    if index is not None and index >= visible:
+        start = min(index - visible + 1, total - visible)
+    window = completions[start:start + visible]
+    names = [completion.display_text or completion.text for completion in window]
+    name_width = min(max(display_width(name) for name in names), max(8, columns // 2))
+    thumb = max(1, round(visible * visible / total))
+    thumb_start = 0 if total <= visible else round(start * (visible - thumb) / (total - visible))
+    meta_width = max(1, columns - 5 - name_width)
+    rows = []
+    for offset, completion in enumerate(window):
+        current = index is not None and start + offset == index
+        name = names[offset]
+        row = []
+        if current:
+            row.append(("class:completion-menu.completion.current", f"{GLYPH['pointer']} {name}"))
+        else:
+            row.append(("", "  "))
+            row.extend((style or "", text) for style, text in (completion.display or [("", completion.text)]))
+        row.append(("", " " * max(1, name_width - display_width(name) + 2)))
+        meta = ellipsize(completion.display_meta_text or "", meta_width)
+        row.append((
+            "class:completion-menu.meta.completion.current" if current
+            else "class:completion-menu.meta.completion",
+            meta,
+        ))
+        remainder = columns - 5 - name_width - display_width(meta)
+        row.append(("", " " * max(0, remainder)))
+        in_thumb = thumb_start <= offset < thumb_start + thumb
+        row.append((
+            "class:completion-icon" if in_thumb else "class:completion-menu.meta.completion",
+            "█" if in_thumb else "│",
+        ))
+        rows.append(row)
+    return rows
 
 
 class StatusLine:
@@ -428,3 +492,38 @@ def _wrap(text: str, width: int) -> list:
     return out or [""]
 
 
+
+
+def report_lines(title, lines, scroll, columns, rows):
+    """只读报告面板：边框、标题、滚动正文与页脚；每行是 (style, text) 片段。"""
+    width = max(24, columns)
+    inner = width - 4
+    body_rows = max(1, rows - 4)
+    total = len(lines)
+    scroll = max(0, min(scroll, max(0, total - body_rows)))
+    head = f" {title} "
+    top = [
+        ("class:status.sep", "╭─"),
+        ("class:picker.title", head),
+        ("class:status.sep", "─" * max(0, width - 3 - display_width(head)) + "╮"),
+    ]
+    footer = "↑/↓ 滚动 · Esc 关闭"
+    if total > body_rows:
+        footer += f" · {scroll + 1}–{min(total, scroll + body_rows)}/{total}"
+    out = [top]
+    for index in range(body_rows):
+        item = lines[scroll + index] if scroll + index < total else ""
+        text, style = item if isinstance(item, tuple) else (item, "")
+        out.append([
+            ("class:status.sep", "│ "),
+            (style, pad(ellipsize(text, inner), inner)),
+            ("class:status.sep", " │"),
+        ])
+    out.append([("class:status.sep", "├" + "─" * (width - 2) + "┤")])
+    out.append([
+        ("class:status.sep", "│ "),
+        ("class:picker.hint", pad(footer, inner)),
+        ("class:status.sep", " │"),
+    ])
+    out.append([("class:status.sep", "╰" + "─" * (width - 2) + "╯")])
+    return out

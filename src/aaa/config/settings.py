@@ -121,6 +121,7 @@ KEYS: Tuple[Key, ...] = (
     Key("ui.git_timeout", 1.0, "float", "单次 Git 查询超时（秒）", minimum=0.2, maximum=10, apply=APPLY_IMMEDIATE),
     Key("ui.exit_confirm_window", 0.5, "float", "Ctrl-C 二次退出窗口（秒）", minimum=0.2, maximum=3, apply=APPLY_IMMEDIATE),
     Key("ui.tool_detail_lines", 10, "int", "工具详情面板最大行数", minimum=3, maximum=40, apply=APPLY_IMMEDIATE),
+    Key("ui.completion_rows", 10, "int", "补全菜单最大可见行数", minimum=3, maximum=20, apply=APPLY_IMMEDIATE),
     Key("ui.banner_enabled", True, "bool", "启动横幅", apply=APPLY_RESTART),
     Key("ui.banner_animate", True, "bool", "播放启动横幅动画", apply=APPLY_RESTART),
     Key("ui.banner_duration", 3.0, "float", "启动动画总时长（秒）", minimum=0.3, maximum=20, apply=APPLY_RESTART),

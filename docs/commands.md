@@ -28,7 +28,8 @@ echo "..." | PYTHONPATH=src python -m aaa --mode json
 | `Ctrl-G` | `$VISUAL`/`$EDITOR` 编辑草稿，失败保留原稿 |
 | `Alt+Up` | 从当前会话的暂停队列取回最近一条 |
 | `Ctrl-O` | 展开/收起最近一次工具调用的完整参数与实际返回结果，不抢草稿焦点 |
-| `PgUp` / `PgDn` | 补全菜单打开时按页移动；工具详情展开时按页滚动；都不覆盖草稿 |
+| `PgUp` / `PgDn` | 补全菜单打开时按页移动；工具详情展开时按页滚动；报告面板内滚动内容；都不覆盖草稿 |
+| 报告面板 | `/help`、`/todos`、`/skills`、`/insight`、`/trust`、`/usage` 以带边框和标题的全屏面板显示；`Esc` 关闭返回输入区，内容不写入滚动历史 |
 | `Shift+Tab` | 空闲时循环权限模式 |
 
 审批无需额外聚焦键：出现后 `↑`/`↓` 在「批准 / 拒绝」间移动，`Enter` 确认，`Esc` 拒绝；挂载后 500ms 内不接受确认，避免误放行。
@@ -45,6 +46,7 @@ echo "..." | PYTHONPATH=src python -m aaa --mode json
 | `-c`、`--continue` | 续接当前目录最近可续聊的 Agent 会话 |
 | `-r`、`--resume <ID>` | 按 id 或前缀续接 Agent 会话 |
 | `--allow-shell` | 非交互模式下自动放行 `run_shell_command`（默认拒绝）；与 `--permission workspace-write` 搭配使用 |
+| `--trust-repo` | 始终信任当前仓库的项目级可执行扩展（启动动画、记忆引擎、MCP 扩展），跳过交互确认 |
 
 - `--model` 只影响本次运行，不改写默认模型。
 - `-c` 与 `-r` 互斥。
@@ -64,7 +66,7 @@ echo "..." | PYTHONPATH=src python -m aaa --mode json
 |---|---|
 | `/help` | 打印命令表 |
 | `/provide` | 渠道编辑器：选渠道或新增，改协议、地址、Key、模型与窗口 |
-| `/config` | 配置：无参进分组菜单；`/config <键>` 查看；`/config <键> <值>` 修改；`/config start <动画名>` 切换启动动画 |
+| `/config` | 配置：无参打开设置面板（页签 / 分组 / 键值，`←→` 切页、`⏎` 改值、`⇥` 跳分组、输入即搜索、`Esc` 关闭）；`/config <键>` 查看；`/config <键> <值>` 修改；`/config start <动画名>` 切换启动动画 |
 | `/model` | 切换模型：列表选择、`<渠道>/<模型>` 精确切换、`next` / `prev` 循环 |
 | `/mode` | 切换权限模式（`read-only` / `workspace-write` / `danger-full-access`） |
 | `/compact` | 立即压缩当前 Agent 会话 |

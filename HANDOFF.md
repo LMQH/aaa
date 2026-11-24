@@ -118,3 +118,35 @@
 - 预期依据：`src/aaa/cli/DESIGN.md` 二节「默认动画」。
 - 结果：327 项 OK；横幅改为 6 行块状 `A` + 前 3 行 `AAA` 字标，版本贴末行，项目全称移除；只有标识走真彩渐变，按 12×6 格子跨满整条渐变；静止帧不取模，右下三块连续收在青 `(0,219,228)` 而不是跳回品红；字标为加粗终端前景色（深色主题下即白色），与 omp 的 `text` token 一致；最小尺寸由 40×12 降到 30×7。
 - 证据位置：本轮 PTY 转录与 `tests/run.sh` 输出；未覆盖 Windows、macOS Terminal 与 256 色降级。
+
+### 补全菜单与输入区对齐（2026-11-24）
+
+- 环境：macOS arm64，`.venv` Python 3.13；tmux 3.6a 110×34 真实终端，`TERM=screen-256color`，临时 `HOME` 与指向 `127.0.0.1:9` 的假渠道，测试进程去掉本机 `NO_COLOR`。
+- 命令与步骤：`./tests/run.sh`；tmux 中启动 `python -m aaa`，输入 `/c` 后分别截屏，再按 `↓` 截屏。
+- 预期依据：`src/aaa/cli/DESIGN.md` 二节「状态条与正文」与三节「行内补全菜单自建渲染」。
+- 结果：331 项 OK；输入行改为 `❯` 箭头；补全菜单选中行有 `❯` 指针、加粗的强调色前景（显式 `noreverse`，无背景块）；命令列对齐、描述列起点一致、最右一列 `█`/`│` 滚动条，prompt_toolkit 自带浮层不再出现；状态行固定显示 `▶ 模式` 与上下文进度条（未测量时 0%）；输入区颜色由 256 色提升到真彩（PTY 实测 3358 个 `38;2`、0 个 `38;5`）。
+- 证据位置：本轮 tmux 截屏与 `tests/run.sh` 输出；未覆盖 Windows、16 色终端与 resize 后的菜单重排。
+
+### 项目扩展信任交互（2026-11-24）
+
+- 环境：macOS arm64，`.venv` Python 3.13；tmux 3.6a 110×34；临时 `HOME` 与临时仓库（含 `.aaa/animations/glow.py`、`.aaa/extensions/toy/extension.toml`）。
+- 命令与步骤：`./tests/run.sh`；在该仓库启动 `python -m aaa`，确认单次合并询问后选「始终信任此仓库」，`/trust` 截屏，再重启截屏核对是否重复询问。
+- 预期依据：`src/aaa/trust.py` 模块说明与 `docs/commands.md` 的 `--trust-repo`。
+- 结果：336 项 OK；首次启动只问一次并同时列出启动动画与 MCP 扩展；选「始终」后 `repos.json` 记录 `"*"`，`/trust` 显示「已信任（始终）」；重启不再询问。
+- 证据位置：本次 tmux 截屏与 `tests/run.sh` 输出；`--trust-repo` 只有单测覆盖，未实机调用。
+
+### 只读报告面板（2026-11-24）
+
+- 环境：macOS arm64，tmux 3.6a 110×30；临时 `HOME` 与含项目扩展的临时仓库。
+- 命令与步骤：`./tests/run.sh`；启动 `python -m aaa` 后执行 `/trust` 截屏，`Esc` 关闭再截屏，随后执行 `/help` 截屏。
+- 预期依据：`src/aaa/cli/DESIGN.md` 三节「只读报告进全屏面板」。
+- 结果：340 项 OK；`/trust`、`/insight`、`/usage` 均为对齐表（表头 `table.header`、合计行 `table.total`，数值右对齐，缺价 `—`，无 `----` 分隔线）；`/todos` 按状态着色，`/skills` 名称与说明分行、说明暗色，`/help` 带图标与对齐命令列；`Esc` 关闭面板后回到输入区，内容不留在滚动历史。
+- 证据位置：本次 tmux 截屏与 `tests/run.sh` 输出；未覆盖 resize 与极窄终端。
+
+### 页签式设置面板（2026-11-24）
+
+- 环境：macOS arm64，tmux 3.6a 110×30；临时 `HOME`（`config.toml` 可写）。
+- 命令与步骤：`./tests/run.sh`；`/config` 打开面板，`↓` 选到 `ui.banner_enabled` 按 `⏎` 切换，`↓` 选到 `logo` 按 `⏎` 内联输入追加字符再 `⏎` 提交，`⇥` 跳分组，`→` 切到模型页，输入 `banner` 搜索，`Esc` 两次退出；随后检查 `config.toml`。
+- 预期依据：`src/aaa/cli/DESIGN.md` 三节「`/config` 是页签式设置面板」。
+- 结果：352 项 OK；10 个页签按域分三段（`·` 与 `│`），外观与记忆页左侧用竖条标出分组范围、组名对齐首行、组间空行分隔，键名暗/值亮、值列紧随名称列；`⏎` 切换与内联输入都即时落盘（`banner_enabled = false`、`logo = αZ`）；搜索显示「搜索 · banner · 4 项」并跨页分组；`Esc` 先清搜索再关闭；状态行预览只在外观页出现。
+- 证据位置：本次 tmux 截屏与 `tests/run.sh` 输出；内联输入当前只支持追加与退格（方向键不移动光标），未覆盖 resize、极窄终端与鼠标。

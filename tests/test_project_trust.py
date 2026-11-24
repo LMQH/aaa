@@ -56,35 +56,72 @@ class EnsureTest(TrustBase):
     def test_non_interactive_never_asks(self) -> None:
         _write(self.project["memory_engines"] / "proj.py", "ENGINE = lambda data_dir: None\n")
 
-        def ask(kind, files):
+        def ask(kinds, text):
             raise AssertionError("非交互模式不应询问")
 
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             trusted = trust_mod.ensure(self.project, interactive=False, ask=ask)
         self.assertEqual(trusted, set())
-        self.assertIn("非交互", err.getvalue())
+        self.assertIn("--trust-repo", err.getvalue())
         self.assertEqual(trust_mod.entries(), {})
 
-    def test_interactive_approves_and_records(self) -> None:
+    def test_interactive_asks_once_for_all_pending_kinds(self) -> None:
         _write(self.project["extensions"] / "toy" / "extension.toml", '[mcp]\ncommand = "x"\n')
+        _write(self.project["animations"] / "glow.py", "ANIMATION = None\n")
         seen = []
 
-        def ask(kind, files):
-            seen.append((kind, list(files)))
-            return True
+        def ask(kinds, text):
+            seen.append((list(kinds), text))
+            return "once"
 
         trusted = trust_mod.ensure(self.project, interactive=True, ask=ask)
-        self.assertIn("extensions", trusted)
-        self.assertEqual(seen[0][0], "extensions")
-        self.assertTrue(seen[0][1])
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(set(seen[0][0]), {"extensions", "animations"})
+        self.assertIn("启动动画", seen[0][1])
+        self.assertIn("MCP 扩展", seen[0][1])
+        self.assertEqual(trusted, {"extensions", "animations"})
         self.assertIn("extensions", trust_mod.trusted_kinds(self.project))
 
-    def test_interactive_deny_keeps_untrusted(self) -> None:
-        _write(self.project["animations"] / "evil.py", "ANIMATION = None\n")
-        trusted = trust_mod.ensure(self.project, interactive=True, ask=lambda kind, files: False)
-        self.assertEqual(trusted, set())
-        self.assertEqual(trust_mod.entries(), {})
+    def test_always_policy_survives_content_changes(self) -> None:
+        anim = _write(self.project["animations"] / "glow.py", "ANIMATION = None\n")
+        trust_mod.ensure(self.project, interactive=True, ask=lambda kinds, text: "always")
+        _write(anim, "ANIMATION = 'changed'\n")
+        self.assertIn("animations", trust_mod.trusted_kinds(self.project))
+        self.assertEqual(trust_mod.pending_kinds(self.project), [])
+        self.assertEqual(trust_mod.status(self.project, "animations"), "always")
+
+    def test_deny_is_remembered_until_content_changes(self) -> None:
+        anim = _write(self.project["animations"] / "evil.py", "ANIMATION = None\n")
+        trust_mod.ensure(self.project, interactive=True, ask=lambda kinds, text: "deny")
+        self.assertEqual(trust_mod.trusted_kinds(self.project), set())
+        self.assertEqual(trust_mod.status(self.project, "animations"), "denied")
+        called = []
+        trust_mod.ensure(self.project, interactive=True, ask=lambda kinds, text: called.append(kinds) or "deny")
+        self.assertEqual(called, [])
+
+        _write(anim, "ANIMATION = 'changed'\n")
+        self.assertIn("animations", trust_mod.pending_kinds(self.project))
+
+    def test_trust_repo_flag_approves_without_asking(self) -> None:
+        _write(self.project["animations"] / "glow.py", "ANIMATION = None\n")
+
+        def ask(kinds, text):
+            raise AssertionError("--trust-repo 不应询问")
+
+        trusted = trust_mod.ensure(self.project, interactive=True, always=True, ask=ask)
+        self.assertEqual(trusted, {"animations"})
+        self.assertEqual(trust_mod.status(self.project, "animations"), "always")
+
+    def test_non_interactive_with_trust_repo_loads(self) -> None:
+        _write(self.project["memory_engines"] / "proj.py", "ENGINE = lambda data_dir: None\n")
+        trusted = trust_mod.ensure(self.project, interactive=False, always=True)
+        self.assertEqual(trusted, {"memory_engines"})
+
+    def test_status_reports_empty_and_pending(self) -> None:
+        self.assertEqual(trust_mod.status(self.project, "animations"), "empty")
+        _write(self.project["animations"] / "glow.py", "ANIMATION = None\n")
+        self.assertEqual(trust_mod.status(self.project, "animations"), "pending")
 
 
 class EngineLoadTest(unittest.TestCase):
