@@ -259,7 +259,9 @@ def p05_json_events():
 @case("P0.6 错误路径（坏 key）")
 def p06_bad_key():
     cfg = load_base_config()
-    cfg["providers"]["tokenhub"]["api_key"] = "invalid-key"
+    # 坏 key 要落在本次运行真正使用的渠道上：默认渠道，缺省时取第一个。
+    provider = (cfg.get("default") or {}).get("provider") or next(iter(cfg["providers"]))
+    cfg["providers"][provider]["api_key"] = "invalid-key"
     home, work = make_home(cfg), Path(tempfile.mkdtemp(prefix="aaa-ws-"))
     code, out, err = run_cli(["-p", "只回复 ok"], home, work, timeout=180)
     if code == 0:
