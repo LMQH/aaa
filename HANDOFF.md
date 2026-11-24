@@ -28,7 +28,7 @@
 - `plugins` — 命令模板、技能、MCP 插件的发现与启停。
 - `cli/{args,app,state,run,ui,completer,commands,controller,render,diff,git_status,banner,key_input,tool_details}` — 入口、调度、渲染、输入适配、工具详情、事件与斜杠命令。
 - `cli/picker` — 自建选择器与单行输入：`❯` 强调色选中、无底色、输入筛选、Esc 逐级返回。
-- `cli/animations` — 启动动画插件：协议、发现与加载；默认 `default`，可选 `sharingan`。默认动画为 α 图形 + 半块 `AAA`，渐变旋转 + 高光扫过。
+- `cli/animations` — 启动动画插件：协议、发现与加载；默认 `default`，可选 `sharingan`。默认动画为 6 行块状 `A` 标识 + 半块 `AAA` 字标，版本贴末行，渐变旋转 + 高光扫过。
 
 依赖单向：`cli → runtime/model/boundary/config/context/sessions/usage/memory`；`runtime → model/boundary/config/context/tools/memory`；`sessions → model/config`；`usage → config/model`；`config → model/boundary`；`memory → config.paths`；下层不 import CLI。`miniviking` 只 import `aaa.memory` 的公开协议，`aaa` 核心不 import `miniviking`。`boundary` 与 `tools` 互不 import，由 `runtime.tools_for_mode` 合并。
 
@@ -110,3 +110,11 @@
 - 结果：326 项 OK；启动后输出 `ESC[>4;2m`；Shift+Enter 序列未提交、草稿保留（Ctrl-C 回显 `已清空草稿；按 Up 取回`）；退出输出 `ESC[>4m`，退出码 0。owner 在本机 iTerm2 3.7.7 用物理 Shift+Enter 确认换行生效（2026-11-24）。
 - 独立审查（`ReviewKeyProtocol`，13m49s，只读）：1 High + 4 Medium + 4 Low。已修并补测试：审批待决时 Shift+Enter 会误批准/误发送（新增 `approval_enter` 并校验 `KeyPress.data`）、Backspace 码 8 与 Alt 前缀、Ctrl+`[`/Ctrl+3 等 Esc 别名被吞、Super 组合被改写成普通字符、畸形 CSI-u 泄漏成字面文本、Ctrl+Shift+Tab 误切权限模式、Esc 与回车跨读取被融合、kitty 误列入支持名单。delta 复审未重跑。
 - 证据位置：本轮 PTY 转录、owner 现场确认与 `tests/run.sh` 输出；未覆盖 Windows 与 macOS Terminal。
+
+### 启动横幅改版（2026-11-24）
+
+- 环境：macOS arm64，`.venv` Python 3.13；PTY 100×30，`TERM=xterm-256color`、`COLORTERM=truecolor`，测试进程移除本机 `NO_COLOR`，临时 `HOME` 与指向 `127.0.0.1:9` 的假渠道。
+- 命令与步骤：`./tests/run.sh`；`python -m aaa` 启动后截取前 6 秒输出，核对首帧与重绘次数。
+- 预期依据：`src/aaa/cli/DESIGN.md` 二节「默认动画」。
+- 结果：327 项 OK；横幅改为 6 行块状 `A` + 前 3 行 `AAA` 字标，版本贴末行，项目全称移除；只有标识走真彩渐变，按 12×6 格子跨满整条渐变；静止帧不取模，右下三块连续收在青 `(0,219,228)` 而不是跳回品红；字标为加粗终端前景色（深色主题下即白色），与 omp 的 `text` token 一致；最小尺寸由 40×12 降到 30×7。
+- 证据位置：本轮 PTY 转录与 `tests/run.sh` 输出；未覆盖 Windows、macOS Terminal 与 256 色降级。

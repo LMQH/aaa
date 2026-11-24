@@ -14,6 +14,7 @@ from unittest.mock import patch
 from prompt_toolkit.utils import get_cwidth
 
 from aaa.cli import animations, banner
+from aaa.cli.animations import default as default_animation
 from aaa.cli.animations import sharingan
 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -91,12 +92,29 @@ class BannerTest(unittest.TestCase):
         self.assertNotEqual(first, static)
         self.assertEqual(last, static)
         plain = ANSI.sub("", static).splitlines()
-        self.assertEqual(plain[2].strip(), "..████..█████...   ▄▀▀▄ ▄▀▀▄ ▄▀▀▄")
-        self.assertIn("v1.2.3", plain[6])
-        self.assertIn("Amaterasu Agno Agent", plain[7])
+        self.assertEqual(len(plain), 6)
+        self.assertEqual(plain[2].strip(), "███  ███     █  █ █  █ █  █")
+        self.assertIn("\x1b[1m▄▀▀▄ ▄▀▀▄ ▄▀▀▄\x1b[0m", static)
+        self.assertEqual(static.count("\x1b[1m"), 3)
+        self.assertIn("v1.2.3", plain[5])
+        self.assertNotIn("Amaterasu", static)
         self.assertTrue(all(get_cwidth(re.sub(r"\x1b\[[0-9;]*m", "", line)) <= 100 for line in first.splitlines()))
-        self.assertEqual(animations.limits(animation), (40, 12))
-        self.assertTrue(banner._fits(animation, 40, 12))
+        self.assertEqual(animations.limits(animation), (30, 7))
+        self.assertTrue(banner._fits(animation, 30, 7))
+
+    def test_icon_gradient_spans_the_mark_grid_not_the_banner(self) -> None:
+        frame = default_animation._render("0", 100, 0.0)
+        rows = frame.splitlines()
+
+        def colors(index):
+            return re.findall(r"\x1b\[38;2;(\d+);(\d+);(\d+)m", rows[index])
+
+        self.assertEqual(colors(5)[0], ("147", "98", "244"))   # 左下角落在渐变中点
+        self.assertEqual(colors(5)[-1], ("0", "219", "228"))   # 右下角落在渐变终点，不跳回起点
+        self.assertNotEqual(colors(0)[0], colors(0)[-1])       # 同一行有可见色差
+        last, second = colors(5)[-1], colors(5)[-2]
+        gap = sum((int(a) - int(b)) ** 2 for a, b in zip(last, second)) ** 0.5
+        self.assertLess(gap, 40)                               # 右下两格连续，没有接缝
 
     def test_narrow_or_short_terminal_degrades_to_the_plain_title(self) -> None:
         animation = sharingan.ANIMATION
