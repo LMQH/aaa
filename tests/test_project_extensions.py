@@ -164,5 +164,36 @@ class SkillsLabelTest(unittest.TestCase):
         self.assertIn("weird", buf.getvalue())
 
 
+class UnifiedDiscoveryTest(unittest.TestCase):
+    def test_discover_extensions_gates_and_collects_all_kinds(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (root / ".git").mkdir()
+        _write(root / ".aaa" / "commands" / "ship.md", "发布 $ARGUMENTS")
+        _write(root / ".aaa" / "skills" / "brief" / "SKILL.md",
+               "---\nname: brief\ndescription: 项目技能\n---\nP")
+        _write(root / ".aaa" / "extensions" / "toy" / "extension.toml",
+               '[mcp]\ncommand = "python toy.py"\n')
+        _write(root / ".aaa" / "extensions" / "coded" / "extension.toml",
+               '[extension]\nkind = "python"\n')
+        _write(root / ".aaa" / "extensions" / "coded" / "extension.py", "def activate(ctx): ...\n")
+        _write(root / ".aaa" / "animations" / "glow.py", "ANIMATION = None\n")
+
+        untrusted = plugins.discover_extensions(plugins.project_dirs(root))
+        self.assertEqual(list(untrusted.commands), ["ship"])
+        # 项目技能受信任门控：未信任时 brief 不在来源映射（builtin/用户技能不受控）。
+        self.assertNotIn("brief", untrusted.skill_sources)
+        self.assertEqual(untrusted.mcp, [])
+        self.assertEqual(untrusted.python, [])
+        self.assertIsNone(untrusted.animations_dir)
+
+        trusted = plugins.discover_extensions(plugins.project_dirs(root), trusted=frozenset({
+            "skills", "extensions", "animations",
+        }))
+        self.assertEqual(trusted.skill_sources.get("brief"), "project")
+        self.assertEqual([e.name for e in trusted.mcp], ["toy"])
+        self.assertEqual([e.name for e in trusted.python], ["coded"])
+        self.assertEqual(trusted.animations_dir, (root / ".aaa" / "animations").resolve())
+
+
 if __name__ == "__main__":
     unittest.main()

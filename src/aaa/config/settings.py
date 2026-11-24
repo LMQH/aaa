@@ -129,6 +129,8 @@ KEYS: Tuple[Key, ...] = (
         "启动动画（/config start 选择，或填 cli/animations 与 ~/.aaa/animations 中的文件名）", apply=APPLY_RESTART),
     Key("extensions.mcp_timeout", 120, "int", "MCP 连接与调用的超时秒数",
         minimum=5, maximum=3_600, apply=APPLY_IMMEDIATE),
+    Key("extensions.hook_timeout", 5.0, "float", "扩展工具拦截器的超时秒数（超时即拒绝该次调用）",
+        minimum=1, maximum=60, apply=APPLY_IMMEDIATE),
     Key("ui.toolbar_width", 48, "int", "状态条目录显示宽度", minimum=8, maximum=200, apply=APPLY_IMMEDIATE),
     Key("ui.bar_min_width", 24, "int", "上下文条最小宽度", minimum=8, maximum=200, apply=APPLY_IMMEDIATE),
     Key("ui.bar_max_width", 80, "int", "上下文条最大宽度", minimum=8, maximum=400, apply=APPLY_IMMEDIATE),

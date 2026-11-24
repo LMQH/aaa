@@ -8,6 +8,7 @@ from typing import Any, List, Optional
 
 from ..memory.host import MemoryHost
 from ..runtime.agent import (
+    extension_prompt_blocks,
     skills_for_mode,
     system_instructions,
     tool_names,
@@ -118,6 +119,12 @@ def collect(state: Any) -> Insight:
         state.mode, tools, memory,
         project_max_chars=int(state.settings.get("project.instructions_max_chars")),
     )
+    blocks_text = extension_prompt_blocks(
+        getattr(state, "extension_registry", None), state.mode,
+        cap=int(state.settings.get("project.instructions_max_chars")),
+    )
+    if blocks_text:
+        instructions = f"{instructions}\n\n{blocks_text}"
     skills_bundle = skills_for_mode(getattr(state, "plugin_skills", None), state.mode)
     snippet_fn = getattr(skills_bundle, "get_system_prompt_snippet", None)
     skill_text = snippet_fn() if callable(snippet_fn) else ""
@@ -168,7 +175,8 @@ def collect(state: Any) -> Insight:
 
     segments = [
         Segment("1", "基础提示词", count_text(instructions, state.model_id),
-                "SYSTEM.md 内置/覆盖 + APPEND_SYSTEM + 项目 AGENTS.md"),
+                "SYSTEM.md 内置/覆盖 + APPEND_SYSTEM + 项目 AGENTS.md"
+                + (" + 扩展提示词块" if blocks_text else "")),
         Segment("2", "内置工具", count_tool_schemas(builtin_payloads, state.model_id),
                 f"{len(builtin_payloads)} 个 schema"),
         Segment("3", "自定义工具", count_tool_schemas(custom_payloads, state.model_id),

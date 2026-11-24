@@ -14,6 +14,7 @@ from agno.tools.function import Function
 from ..boundary.policy import MODE_READ, PolicySource, resolve_policy
 from ..config.paths import DATA_DIR, DB_FILE
 from ..context.params import compact_threshold, compaction_budget, history_runs
+from ..extensions.loader import ExtensionRegistry, tool_guard
 from ..memory import MemoryEngineError
 from ..memory.host import ActiveMemory, MemoryHost
 from ..model.catalog import Catalog, ModelRef
@@ -63,6 +64,41 @@ def skills_for_mode(skills: Optional[Skills], mode: str) -> Optional[Skills]:
     if not isinstance(skills, Skills) or mode != MODE_READ:
         return skills
     return GatedSkills(skills.loaders, allow_scripts=False)
+
+
+def extension_prompt_blocks(registry: Optional[ExtensionRegistry], mode: str, cap: int) -> str:
+    """渲染扩展提示词块（system_tail）；`cap` 为单块字符上限，0 关闭。"""
+    return registry.render_blocks(mode, cap) if registry is not None else ""
+
+
+def _extension_hooks(extensions: Optional[ExtensionRegistry]) -> dict:
+    """扩展事件的 run 前后钩子：轮前发 run.started/message.user，轮末回放
+    tool.* / message.assistant / run.completed。钩子异常由总线隔离。"""
+    if extensions is None:
+        return {"pre_hooks": [], "post_hooks": []}
+    bus = extensions.bus
+
+    def pre_hook(run_input, run_context, user_id: Optional[str] = None) -> None:
+        content = getattr(run_input, "input_content_string", lambda: "")()
+        bus.emit("run.started", {"run_id": getattr(run_context, "run_id", "")})
+        bus.emit("message.user", {"content": content})
+
+    def post_hook(run_output, run_context, user_id: Optional[str] = None) -> None:
+        seen = set()
+        for record in getattr(run_output, "tools", None) or []:
+            name = getattr(record, "tool_name", "") or ""
+            key = (name, str(getattr(record, "tool_args", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+            bus.emit("tool.called", {"tool": name, "args": getattr(record, "tool_args", None)})
+            bus.emit("tool.returned", {"tool": name, "content": getattr(record, "result", None)})
+        for message in getattr(run_output, "messages", None) or []:
+            if getattr(message, "role", "") == "assistant":
+                bus.emit("message.assistant", {"content": getattr(message, "content", "")})
+        bus.emit("run.completed", {"run_id": getattr(run_output, "run_id", "")})
+
+    return {"pre_hooks": [pre_hook], "post_hooks": [post_hook]}
 
 
 def _session_db() -> SqliteDb:
@@ -172,6 +208,7 @@ def build_agent(
     memory: ActiveMemory = None,
     delegation: Optional[DelegationRegistry] = None,
     delegation_models: Sequence[ModelRef] = (),
+    extensions: Optional[ExtensionRegistry] = None,
 ) -> Agent:
     """构造 Agent 实例：Provider + Tools + 会话持久化 + 原生压缩 + 记忆。
 
@@ -191,6 +228,8 @@ def build_agent(
         enforce_min_fold_ratio=True,
     )
     all_tools = tools_for_mode(mode, settings) + _extension_tools(extra_tools)
+    if extensions is not None:
+        all_tools += extensions.tools_for(resolve_policy(mode).capabilities, mode)
     if delegation is not None:
         all_tools += make_delegation_tools(
             delegation, catalog, delegation_models, ModelRef(provider, model_id),
@@ -204,7 +243,23 @@ def build_agent(
         mode, all_tools, memory,
         project_max_chars=int(settings.get("project.instructions_max_chars")),
     )
+    blocks_text = extension_prompt_blocks(
+        extensions, mode, cap=int(settings.get("project.instructions_max_chars")),
+    )
+    if blocks_text:
+        instructions = f"{instructions}\n\n{blocks_text}"
     memory_options = _memory_options(memory, settings, model_instance, db, instructions)
+    extension_hooks = _extension_hooks(extensions)
+    if extension_hooks["pre_hooks"]:
+        memory_options["pre_hooks"] = memory_options.get("pre_hooks", []) + extension_hooks["pre_hooks"]
+    if extension_hooks["post_hooks"]:
+        memory_options["post_hooks"] = memory_options.get("post_hooks", []) + extension_hooks["post_hooks"]
+
+    # 扩展的工具拦截器挂 Agno 原生 tool_hooks（装配点）；没有拦截器就不挂。
+    tool_hooks = (
+        [tool_guard(extensions, float(settings.get("extensions.hook_timeout")))]
+        if extensions is not None and extensions.interceptors else None
+    )
 
     return Agent(
         model=model_instance,
@@ -215,6 +270,7 @@ def build_agent(
         # MCP 桥接作为常规工具传给 Agno；技能索引与读取工具由 Agno skills 原生装配。
         tools=all_tools,
         skills=skills_for_mode(skills, mode),
+        tool_hooks=tool_hooks,
         **memory_options,
         # 内置记忆沿用会话库；外置引擎不接触该库。
         db=db,

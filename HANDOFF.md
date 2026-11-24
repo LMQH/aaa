@@ -1,6 +1,6 @@
 # HANDOFF
 
-- 更新日期：2026-11-24
+- 更新日期：2026-11-25
 - 版本控制：git（`origin` → `https://github.com/LMQH/aaa.git`）；`main` 已推送；依赖由 `pyproject.toml` + `uv.lock` 复现。
 - 当前状态：主会话由 Agno 原生 `Agent.run()` 驱动；内置委派工具在线程中运行独立 Agent、Team 或 Workflow。记忆默认关闭；通过 `/memory engine` 选择内置或外置，重启生效。开发自测入口为 `scripts/aaa-dev.sh`（源码直跑）；发布门已就绪，尚未发版。
 - 文档分工：`AGENTS.md` 维护项目要求与流程，`docs/architecture.md` 维护系统结构与跨模块约定，模块 `DESIGN.md` 维护本模块机制与不变量，`README.md` 只讲用法。
@@ -56,12 +56,11 @@
 - **沙箱**：本期不做。接入点是 `boundary.Isolation` 的声明与可替换的 `PolicySource`。
 - **隔离强度**：文件工具与 `grep` 受工作区根约束并共用排除路径；相对路径按启动目录解析；shell 的工作目录是启动目录，只有审批，无路径约束。
 - **Team 任务依赖（上游）**：Agno 3.1.12 的 `execute_task` 完成后不自动刷新已阻塞的依赖。委派支持 `tasks`；领队在确认前置任务成功后，用 Agno 原生 `update_task_status` 刷新依赖。
-- **真实渠道覆盖**：P0 闭环与真实工具已通过 2026-11-24 的真实渠道验收；压缩、归档检索、内置记忆写入→新会话注入已通过 2026-11-23 的验收，本次未重跑；miniviking BGE 语义检索真实端到端已通过；外部引擎经真实渠道的召回注入与 `cached_tokens` 上报仍未整体实测。
+- **真实渠道覆盖**：P0 闭环与真实工具已通过 2026-11-24 的真实渠道验收；压缩与归档检索已在 2026-11-25 重跑（P1.7、P1.8 PASS）；内置记忆写入→新会话注入以 2026-11-23 为准，未重跑；miniviking BGE 语义检索真实端到端已通过；外部引擎经真实渠道的召回注入与 `cached_tokens` 上报仍未整体实测。
 - **物理终端**：`ESC[>4;2m` 的发出与还原、iTerm2 发出的 `ESC[27;2;13~` 与换行效果已在 PTY 实测；owner 已在本机 iTerm2 3.7.7 用物理 Shift+Enter 确认可用。macOS Terminal 不支持该协议，仍需终端侧映射。
 - **发布**：发版门已就绪（`scripts/release.py` 人建 tag、手动 dispatch、`environment: release` 审批、草稿 Release）；尚未发版。PyPI/testPyPI 尚未实现。
 - **平台**：Windows 的 PowerShell 与后台任务分支未实跑。
 - **首次发版**：尚未创建 tag/Release；`release.py tag` 的完整成功路径未跑（会创建真实 tag），早期检查与 pre-push 兜底已验证。
-- **e2e 的 P1 用例写死了 `tokenhub`**：`tests/e2e.py` 的 P1.7、P1.8 只改 tokenhub 渠道的窗口，默认渠道是 deepseek 时压缩不会触发；P0.6 已改为取默认渠道。
 
 ## 下一步
 
@@ -77,6 +76,15 @@
 ## 当前验证证据
 
 按工作线分组，只保留最新证据；历史批次在版本控制记录中。
+
+### e2e 压缩用例脱离 tokenhub（2026-11-25）
+
+- 环境：macOS arm64，`.venv` Python 3.13；真实渠道，默认渠道为 `deepseek/deepseek-flash`，每个用例独立临时 HOME。
+- 命令与步骤：`uvx ruff==0.17.6 check tests/e2e.py`；`tests/e2e.py --suite p1`；`tests/e2e.py --suite p0 --only P0.6`。
+- 预期依据：P1.7、P1.8 的窗口改在本次运行真正使用的渠道上（与 P0.6 同一个取法），自动压缩按 `context_window − 16384` 的阈值触发。
+- 结果：ruff 全过。P1.7 第 4 轮触发自动压缩 PASS；P1.8 PASS（答对但未走检索工具，可能仍在保留尾内）；P0.6 换用共用取法后 PASS（exit=1，日志有 ERROR）。P1 合计 52.6 秒。
+- 证据位置：本节与 `tests/e2e.py`。
+- 未覆盖：P1.8 未实际走到 `search_compacted_history`；P2.12 的 PTY 用例仍写死 `deepseek` 的 api_key，不在本条范围。
 
 ### 会话分叉、打断并发出、中文提示词与工具作用范围（2026-11-24）
 
@@ -100,6 +108,46 @@
 - D1 决策与收紧（owner 2026-11-24 本会话拍板，选项 c）：技能纳入仓库信任类别——`trust.KINDS` 新增 `skills`（指纹覆盖 `.aaa/skills/<名>/` 全部文件，含 `scripts/`），项目技能目录仅在信任后装配（`AppState.start(trusted=…)`，非交互未信任时跳过并提示 `--trust-repo`）；read-only 不开放脚本执行——`runtime.skills_for_mode` 在合并点换用 `plugins.GatedSkills`（移除 `get_skill_script` 工具，索引中脚本清单置 `none` 且不宣传该工具），`/insight` 同步按模式计数。残余：workspace-write 非交互不带 `--allow-shell` 时技能脚本仍可执行（owner 仅限定 read-only）。
 - 变更附带影响：分类目录 `<分类>/<技能名>/SKILL.md` 不再被发现（Agno 只扫一层，静默丢弃）；技能索引体积从约 6,946 tokens 增至 12,306 tokens（索引现列出引用与脚本清单），每轮随系统消息发送。
 - 独立 QA（`QaSkillMigration`，43m20s，只读；受审修订 HEAD `943e313` + 工作区 diff）：主流程验收 1–4 通过（353 项 OK、真实装配 94 个技能且来源/覆盖方向正确、三工具正文与引用逐份比对一致、越界路径被拒、系统提示含 `<skills_system>` 且无正文泄漏）；发现并推动修复 `uv build --wheel` 直构失败（符号链接 + force-include 双份写入，R2 打包配置复核通过）；缺陷 D3–D8（miniviking 文档残留、来源标签按目录名而非 frontmatter 名、四处「纯文本不执行」过期表述、畸形 frontmatter 使 `/skills` 抛异常、DESIGN/HANDOFF 旧签名）当轮已全部修复并补 D4/D6 回归测试；D1（技能脚本执行绕过权限模式与 `--allow-shell`，含未信任仓库的 `.aaa/skills` 脚本）待 owner 决定。防假测试 11 处改错抓到 6 处；`/insight` 接线与排序等 5 处测试缺口未补。证据目录 `/tmp/aaa_qa_skills.Ba3e2a/`。
+
+### 扩展协议阶段 1：协议内核（2026-11-24）
+
+- 环境：macOS arm64，`.venv` Python 3.13，agno 3.1.12；接口面经 owner 审定（本会话），三个开放点按默认（9 事件目录、状态栏面板留阶段 4、提示词块 `system_tail` 留阶段 3）。
+- 变更：新增 `src/aaa/extensions/`（`protocol.py` 接口句柄与 9 事件目录、`bus.py` 事件总线（异常隔离、单扩展 3 次失败会话内挂起）、`loader.py`（`extension.toml [extension] kind="python"` 发现、`activate(ctx)` 激活、`PROTOCOL_VERSION` 校验、失败只禁用本扩展）、`DESIGN.md`）；`boundary.is_external_tool` 纳入 `ext_` 前缀（外部信任面：每次询问、审批策略不自动放行）；`runtime.build_agent(extensions=…)` 按模式装配扩展工具并挂 run 前后钩子（`run.started`/`message.user` 轮前，`tool.*`/`message.assistant`/`run.completed` 轮末回放）；`cli/run.py` 失败路径发 `run.failed`（取消不算失败）；`cli/state.py` 发现/信任门控/加载，`trusted` 参数与 MCP 共用 `extensions` 类别。
+- 命令：`./tests/run.sh`；`tests/test_extensions.py` 11 项（发现/去重、失败隔离、模式裁剪、外部信任分类、总线挂起、Agent 请求内工具按模式出现、run 生命周期事件落盘）。
+- 预期依据：`src/aaa/extensions/DESIGN.md`、`docs/architecture.md`「扩展协议」节。
+- 结果：399 项 OK；ruff 全过；read-only 下仅 `read` 能力与 `read_safe` 扩展工具在列，workspace-write 全量在列且 `requires_confirmation=True`，danger-full-access 下 `confirm="mode"` 免确认；加载失败的扩展被禁用且不影响其他扩展；事件 handler 连续 3 次异常挂起整个扩展。
+- 未覆盖：真实 HITL 审批流对 `ext_` 工具的端到端（走既有 `is_external_tool` 分支，未单测）；`/plugin` 对编程扩展的启停显示；阶段 2–4 未实施——阶段 2 触碰并行工作线热区（`app.py`/`controller.py`），排队等其提交。
+- 证据位置：本节与 `tests/run.sh` 输出；代码未提交（含并行线改动的工作区，提交需 owner 指令）。
+
+### 扩展协议阶段 2–4：归一、提示词块、面板（2026-11-25）
+
+- 环境：macOS arm64，`.venv` Python 3.13，agno 3.1.12；并行线（会话分叉/提示词拆分/命令工作目录）已提交（`cc45997`），本节改动叠于其上。
+- 变更：阶段 2——`plugins.discover_extensions` 统一发现入口（命令/技能/MCP/编程扩展/动画目录一次扫描 + 信任门控），`AppState.start` 只消费发现结果；阶段 3——`register_prompt_block`（`system_tail`）→ `registry.render_blocks(mode, cap)` 以 `<extension_block source="…">` 包裹追加系统消息尾部，单块字符上限 `project.instructions_max_chars`（0 关闭），`/insight` 基础提示词段计入并标注；阶段 4——`register_panel`（面板名全局唯一，重复注册触发加载失败禁用）+ `/panel` 命令（列出/`<名>`/off）+ 状态栏上方插槽（活动面板渲染至多 8 行，异常降级提示行）。
+- 命令：`./tests/run.sh`；`tests/test_extensions.py` 18 项（含面板重复名、activate/off、状态视图渲染、`/panel` 命令、块渲染/截断/0 关闭）与 `tests/test_project_extensions.py` 统一发现门控测试。
+- 预期依据：`src/aaa/extensions/DESIGN.md`（四阶段全实现）、`docs/architecture.md`「扩展协议」节。
+- 结果：407 项 OK；ruff 全过；统一发现未信任时项目技能/扩展/动画全部缺席、信任后齐备；提示词块进系统消息尾部并被 `/insight` 计入；面板名重复触发加载失败禁用；`/panel` 列表/打开/关闭语义正确。
+- 未覆盖：面板在 PTY 真终端的渲染走查（逻辑有单测，未起 PTY）；提示词块真实模型下的行为；扩展间通信（未设计，留待真实需求）。
+- 证据位置：本节与 `tests/run.sh` 输出；代码未提交，含阶段 1–4 全部改动，提交需 owner 指令。
+
+### 扩展生态收口：接口欠账、面板命名空间、作者文档（2026-11-25）
+
+- 环境：macOS arm64，`.venv` Python 3.13，agno 3.1.12。
+- 变更：补齐审定接口面的三处欠账——`ctx.settings`（只读视图，未知键返回默认值，无写入口）、`ctx.log`（`aaa.ext.<名>` logger，写入 aaa 日志）、`ctx.register_command`（与 `commands/*.md` 同名字空间、同 `$ARGUMENTS`，文件模板优先，名字经 `[a-z0-9][a-z0-9_-]*` 校验）；`ctx.home` 暴露扩展目录。面板名自动加 `<扩展名>/` 前缀（不同扩展同名可共存，同一扩展重名仍拒绝加载），`/panel` 支持唯一短名。新增作者文档 `docs/extending/extensions.md` 与可运行示例 `docs/extending/examples/hello/`（在测试中实际加载，防止示例腐烂），并在 `docs/extending/README.md` 一览与 `create-extension` 技能表登记。
+- 命令：`./tests/run.sh`；`tests/test_extensions.py` 30 项（新增：settings 只读/未知键默认/无 set、日志前缀、命令注册校验与同名拒绝、扩展命令与 md 命令合并且 md 优先、面板短名解析与跨扩展同名、示例扩展全挂载点加载）。
+- 预期依据：`src/aaa/extensions/DESIGN.md`、`docs/extending/extensions.md`。
+- 结果：420 项 OK；ruff 全过。
+- 未覆盖与边界：开发循环仍为「重启生效、无 /reload」；加载失败只进日志不在终端提示；示例扩展未在真实模型会话里跑（只验证装载与注册）。
+- 证据位置：本节与 `tests/run.sh` 输出；代码未提交，提交需 owner 指令。
+
+### 工具调用前钩子与审批第三档（2026-11-25）
+
+- 环境：macOS arm64，`.venv` Python 3.13，agno 3.1.12；owner 决定开前置钩子、按建议修确认语义并加会话级放行。
+- 变更：`ExtensionContext.intercept_tool(handler)`——注册工具调用前拦截器，`ToolCall`/`ToolDecision` 契约，拒绝以说明作为工具结果；`extensions.loader.tool_guard` 挂 Agno 原生 `Agent(tool_hooks=…)`（装配点，`delegation._rejection` 同款机制），只在有拦截器时挂。契约：只能收紧（不放行需确认的调用、不改参——Agno 的确认暂停在钩子之前），异常或超时（新键 `extensions.hook_timeout`，默认 5 秒）视为拒绝并写日志，同一扩展 3 次失败会话内挂起。修正 `confirm="mode"` 语义为跟随模式确认名单（原实现在 read-only 也询问，偏离审定接口面）。审批加第三档「本会话总是允许」：`AppState.tool_allows`（会话级、不落盘）按工具名放行，`approve_requirements` 先查会话放行再询问；文件改动类工具不提供该档。
+- 命令：`./tests/run.sh`；`tests/test_extensions.py` 24 项（新增：mode 确认语义两档、会话放行与文件审阅不记忆、拦截器拒绝/放行/异常三次挂起/超时拒绝、Agent 运行内工具被拦截）。
+- 预期依据：`src/aaa/extensions/DESIGN.md` 关键约定「工具调用前拦截」「审批第三档」「确认规则」。
+- 结果：413 项 OK；ruff 全过。
+- 未覆盖与边界：交互审批三档 UI 未起 PTY 走查（现有审批相关测试全绿，行内三选项不改变高度）；钩子只覆盖主 Agent，委派子 Agent 的工具调用不经拦截（子 Agent 本就不执行需确认的动作）；拦截线程超时后无法终止，只在后台跑完；宪法「成本治理不进运行路径」红线文字未动，owner 表示「或许可以调整」，钩子契约对用途中立，是否改写红线待 owner 明确。
+- 证据位置：本节与 `tests/run.sh` 输出；代码未提交，提交需 owner 指令。
 
 ### 仓库、CI 与发布门（2026-11-24）
 

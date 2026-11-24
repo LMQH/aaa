@@ -64,7 +64,14 @@ from .controller import Controller
 from .git_status import read_status
 from .key_input import create_cli_input, extended_keys, is_shift_enter
 from .render import sanitize
-from .run import HumanEmitter, JsonEmitter, PlainEmitter, stream_continue, stream_run
+from .run import (
+    ALWAYS_ALLOW,
+    HumanEmitter,
+    JsonEmitter,
+    PlainEmitter,
+    stream_continue,
+    stream_run,
+)
 from .state import AppState
 from .tool_details import ToolDetails
 from .ui import (
@@ -177,6 +184,7 @@ def run_once(
         channel=state.provider,
         review_root=state.review_root(), images=images,
         memory=state.memory if isinstance(state.memory, MemoryHost) else None,
+        tool_allows=getattr(state, "tool_allows", None),
     )
     if output == "json":
         print(json.dumps({
@@ -378,6 +386,27 @@ def _run_application(
             mode=state.mode,
         ))
 
+    def panel_lines() -> FormattedText:
+        """扩展面板插槽：活动面板的渲染行；渲染异常降级为一行提示。"""
+        registry = getattr(state, "extension_registry", None)
+        name = getattr(registry, "active_panel", None)
+        spec = registry.panel(name) if (registry is not None and name) else None
+        if spec is None:
+            return FormattedText([])
+        _, model = state.selection()
+        view = {
+            "mode": state.mode,
+            "model": model.id,
+            "session_id": state.session_id,
+            "cwd": os.getcwd(),
+        }
+        try:
+            lines = list(spec.render(view))[:8]
+        except Exception:
+            logger.exception("扩展面板 %s 渲染失败", spec.name)
+            lines = [f"面板 {spec.name} 渲染失败（详见日志）"]
+        return FormattedText([("class:status.hint", f" {spec.title}│ {ln}") for ln in lines])
+
     if sys.stdout.isatty() and settings.get("ui.banner_enabled"):
         try:
             duration = float(settings.get("ui.banner_duration")) if settings.get("ui.banner_animate") else 0.0
@@ -396,7 +425,7 @@ def _run_application(
         controller = None
         tool_details = ToolDetails()
         approval_ui = ApprovalSelection()
-        approval_choices = (("批准", True), ("拒绝", False))
+        approval_choices = (("批准", True), ("本会话总是允许", ALWAYS_ALLOW), ("拒绝", False))
 
         def approval_active() -> bool:
             return controller is not None and controller.approval is not None
@@ -763,6 +792,14 @@ def _run_application(
             Window(FormattedTextControl(approval_rows), height=3, wrap_lines=False),
             filter=~is_done & approval_filter,
         )
+        panel_height = Condition(lambda: bool(panel_lines()))
+        panel_view = ConditionalContainer(
+            Window(
+                FormattedTextControl(panel_lines),
+                height=lambda: max(len(panel_lines()), 1), wrap_lines=False,
+            ),
+            filter=~is_done & panel_height,
+        )
         status_view = ConditionalContainer(
             Window(
                 FormattedTextControl(lambda: status_line(session.app.output.get_size().columns)),
@@ -776,7 +813,7 @@ def _run_application(
         )
         session.layout.container = HSplit(
             [
-                todo_view, detail_view, approval_view, activity_view, status_view,
+                todo_view, detail_view, approval_view, activity_view, panel_view, status_view,
                 session.layout.container, menu_view,
             ],
             align=VerticalAlign.TOP,
@@ -811,6 +848,7 @@ def _run_application(
                     user_id=user_id, strategy=strategy, channel=channel,
                     review_root=root, handle=handle, images=images,
                     memory=state.memory if isinstance(state.memory, MemoryHost) else None,
+                    tool_allows=getattr(state, "tool_allows", None),
                 )
                 if not summary.get("error") and not summary.get("cancelled") and not handle["cancel_requested"]:
                     selected_channel, model = state.selection()
@@ -835,6 +873,7 @@ def _run_application(
                     emitter=emitter, user_id=user_id, strategy=strategy,
                     review_root=root, handle=handle, channel=state.provider,
                     memory=state.memory if isinstance(state.memory, MemoryHost) else None,
+                    tool_allows=getattr(state, "tool_allows", None),
                 )
 
             tool_details.clear()

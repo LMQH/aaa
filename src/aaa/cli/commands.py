@@ -445,6 +445,10 @@ def handle_command(state: AppState, text: str) -> bool:
         _skills_command(state)
         return True
 
+    if text == "/panel" or text.startswith("/panel "):
+        _panel_command(state, text[len("/panel"):].strip())
+        return True
+
     if text == "/export" or text.startswith("/export "):
         _export_command(state, text[len("/export"):].strip())
         return True
@@ -1233,7 +1237,7 @@ def _plugin_command(state: AppState, argument: str) -> None:
 
 # ---------------------------------------------------------------- /skills
 
-_SOURCE_LABELS = {"project": "项目", "user": "用户", "builtin": "内置"}
+_SOURCE_LABELS = {"project": "项目", "user": "用户", "builtin": "内置", "extension": "扩展"}
 
 
 def _source_tag(item) -> str:
@@ -1260,6 +1264,32 @@ def _skills_command(state: AppState) -> None:
         desc = str(skill.description or "").splitlines()[0] if skill.description else ""
         emit(state, f"  {skill.name} [{_SOURCE_LABELS.get(source, source)}]", "")
         emit(state, f"      {desc}", "class:picker.hint")
+
+
+def _panel_command(state: AppState, argument: str) -> None:
+    """查看/切换扩展面板：`/panel` 列出，`/panel <名>` 打开，`/panel off` 关闭。"""
+    registry = getattr(state, "extension_registry", None)
+    panels = list(getattr(registry, "panels", ()) or ()) if registry is not None else []
+    if not panels:
+        emit(state, "没有已注册的面板。编程式扩展可通过 register_panel 注册。")
+        return
+    argument = argument.strip()
+    if not argument:
+        active = getattr(registry, "active_panel", None)
+        emit(state, f"已注册 {len(panels)} 个面板（当前：{active or '未打开'}）", "bold")
+        for spec in panels:
+            mark = "●" if spec.name == active else "○"
+            emit(state, f"  {mark} {spec.name} — {spec.title}", "")
+        emit(state, "用 /panel <名> 打开，/panel off 关闭。")
+        return
+    if argument == "off":
+        registry.activate_panel(None)
+        emit(state, "面板已关闭。")
+        return
+    if registry.activate_panel(argument):
+        emit(state, f"面板 {argument} 已打开。")
+    else:
+        emit(state, f"没有名为 {argument} 的面板。用 /panel 查看列表。")
 
 
 # ---------------------------------------------------------------- /usage

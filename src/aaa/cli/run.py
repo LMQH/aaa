@@ -23,6 +23,7 @@ from ..boundary.policy import (
     needs_approval,
     signature,
 )
+from ..extensions import emit_run_failed
 from ..memory import MemoryHost
 from ..runtime.delegation import SAVE_TOOL, parent_run_id, save_approvals
 from .diff import change_diff
@@ -214,18 +215,35 @@ class JsonEmitter:
         pass
 
 
+ALWAYS_ALLOW = "always"  # 审批第三档：本会话不再询问此工具（按工具名，不落盘）
+
+
 def approve_requirements(
     requirements, approved: Set[str], emitter, strategy: str = APPROVAL_ALWAYS,
     review_root=None,
     memory: Optional[MemoryHost] = None,
+    tool_allows: Optional[Set[str]] = None,
 ) -> None:
     """逐个处理 HITL 要求。
 
-    已批准过的同签名直接放行；文件改动工具走内容审阅（diff 预览），且不受
-    `dangerous` 策略自动放行影响——每次改动都要过目；外置记忆工具由引擎
-    声明确认，声明需要确认的同样不自动放行；命令类工具按策略处理，`dangerous` 下
-    未命中危险规则的一次调用直接放行（记日志）；其余交给渲染器。
+    已批准过的同签名直接放行；用户选过「本会话总是允许」的工具按工具名直接放行；
+    文件改动工具走内容审阅（diff 预览），且不受 `dangerous` 策略自动放行影响——
+    每次改动都要过目，也不提供「总是允许」；外置记忆工具由引擎声明确认，声明
+    需要确认的同样不自动放行；命令类工具按策略处理，`dangerous` 下未命中危险
+    规则的一次调用直接放行（记日志）；其余交给渲染器。
     """
+
+    def ask(name, args, diff=None, *, allow_always: bool = True) -> bool:
+        choice = (
+            emitter.ask_approval(name, args, diff=diff) if diff is not None
+            else emitter.ask_approval(name, args)
+        )
+        if not choice:
+            return False
+        if choice == ALWAYS_ALLOW and allow_always and tool_allows is not None:
+            tool_allows.add(name)
+        return True
+
     for requirement in requirements:
         tool = getattr(requirement, "tool_execution", None)
         name = getattr(tool, "tool_name", "tool")
@@ -256,9 +274,14 @@ def approve_requirements(
         if key in approved:
             settle(True)
             continue
+        if tool_allows is not None and name in tool_allows:
+            approved.add(key)
+            settle(True)
+            continue
         if is_external_tool(name):
-            # 第三方 MCP 工具：外部信任面，每次询问；审批策略不自动放行。
-            if emitter.ask_approval(name, args):
+            # 外部信任面（MCP、编程扩展）：默认每次询问，审批策略不自动放行；
+            # 用户可选「本会话总是允许」按工具名放行。
+            if ask(name, args):
                 approved.add(key)
                 settle(True)
             else:
@@ -271,7 +294,7 @@ def approve_requirements(
         )
         if name in confirm_names:
             # 引擎显式请求确认；宿主实例漏传时按注册表兜底。
-            if emitter.ask_approval(name, args):
+            if ask(name, args):
                 approved.add(key)
                 settle(True)
             else:
@@ -279,7 +302,7 @@ def approve_requirements(
             continue
         if name in REVIEW_FILE_TOOLS:
             diff = change_diff(name, args, review_root) if review_root is not None else None
-            if emitter.ask_approval(name, args, diff=diff):
+            if ask(name, args, diff, allow_always=False):
                 approved.add(key)
                 settle(True)
             else:
@@ -291,7 +314,7 @@ def approve_requirements(
             )
             settle(True)
             continue
-        if emitter.ask_approval(name, args):
+        if ask(name, args):
             approved.add(key)
             settle(True)
         else:
@@ -311,6 +334,7 @@ def stream_run(
     handle: Optional[Dict] = None,
     images: Optional[List] = None,
     memory: Optional[MemoryHost] = None,
+    tool_allows: Optional[Set[str]] = None,
 ) -> Dict:
     """流式执行一轮；处理 Agno HITL 暂停并在批准后继续。
 
@@ -332,6 +356,7 @@ def stream_run(
         ),
         session_id, approved, render, user_id, strategy, review_root, handle, metadata=metadata,
         memory=memory,
+        tool_allows=tool_allows,
     )
 
 
@@ -369,6 +394,7 @@ def stream_continue(
     handle: Optional[Dict] = None,
     channel: str = "",
     memory: Optional[MemoryHost] = None,
+    tool_allows: Optional[Set[str]] = None,
 ) -> Dict:
     """从某个既有 run 分叉/重生成：`/edit`（fork+新文本）与 `/redo`（regenerate）共用。
 
@@ -397,6 +423,7 @@ def stream_continue(
         ),
         session_id, approved, render, user_id, strategy, review_root, handle, metadata=metadata,
         memory=memory,
+        tool_allows=tool_allows,
     )
 
 
@@ -412,6 +439,7 @@ def _drain(
     handle: Optional[Dict],
     metadata: Optional[Dict] = None,
     memory: Optional[MemoryHost] = None,
+    tool_allows: Optional[Set[str]] = None,
 ) -> Dict:
     """消费 Agno 事件；取消仅在收到原生取消事件后确认。"""
     tool_start: Dict[str, float] = {}
@@ -507,7 +535,7 @@ def _drain(
 
             requirements = paused.requirements or []
             approve_requirements(requirements, approved, render, strategy, review_root=review_root,
-                                 memory=memory)
+                                 memory=memory, tool_allows=tool_allows)
             if handle is not None and handle.get("cancel_requested"):
                 summary["error"] = True
                 render.event("error", message="运行在审批时暂停；已请求取消，但尚未确认取消完成")
@@ -536,6 +564,7 @@ def _drain(
         render.event("error", message="已中断事件消费；无法确认运行已取消")
     except Exception as exc:
         logger.exception("run failed")
+        emit_run_failed({"error": str(exc)})
         summary["error"] = True
         render.event("error", message=str(exc))
     finally:

@@ -12,6 +12,7 @@ description: 为 aaa 创建扩展或插件：启动动画、自定义斜杠命�
 | 增加斜杠命令 | `commands.md` | `create_plugin(kind="command", ...)` |
 | 接入 MCP 服务 | `mcp-extensions.md` | `create_plugin(kind="extension", ...)` |
 | 接入记忆引擎 | `memory-engine.md` | 给用户完整文件内容，由用户保存到 `~/.aaa/memory_engines/`；或提供 entry_points 声明 |
+| 写编程式扩展（工具/事件/拦截/面板/命令） | `extensions.md` | 给用户完整目录内容（`extension.toml` + `extension.py`），由用户保存到 `~/.aaa/extensions/<名>/`；参考 `examples/hello/` |
 | 创建技能 | `skills.md` | `create_skill(...)` |
 | 配置渠道或模型 | `models-and-channels.md` | 指导用户使用 `/provide`，凭据由用户自己填写 |
 | 调整运行设置或自有提示词 | `settings.md` | 按指南指向 `/config` 或由用户维护提示词文件 |

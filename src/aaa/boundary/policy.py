@@ -95,15 +95,16 @@ PolicySource = Callable[[str, Optional[Path]], ModePolicy]
 # `dangerous` 策略只对命令类工具生效，文件改动每次都要过目。
 REVIEW_FILE_TOOLS = frozenset({"write_file", "edit_file", "move_file"})
 
-# 外部信任面的工具名前缀（MCP 插件）：第三方代码，每次询问、审批策略不自动放行。
-EXTERNAL_TOOL_PREFIX = "mcp_"
+# 外部信任面的工具名前缀：第三方代码（MCP 插件）与编程式扩展注册的工具，
+# 每次询问、审批策略不自动放行。
+EXTERNAL_TOOL_PREFIXES = ("mcp_", "ext_")
 
 # 自家但改动用户配置的工具：同样每次询问、不自动放行。
 ALWAYS_ASK_TOOLS = frozenset({"create_plugin", "create_skill"})
 
 
 def is_external_tool(name: str) -> bool:
-    return name.startswith(EXTERNAL_TOOL_PREFIX) or name in ALWAYS_ASK_TOOLS
+    return name.startswith(EXTERNAL_TOOL_PREFIXES) or name in ALWAYS_ASK_TOOLS
 
 
 def capabilities(mode: str) -> FrozenSet[str]:

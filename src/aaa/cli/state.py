@@ -13,8 +13,9 @@ from agno.skills import Skills
 from .. import plugins, trust
 from ..boundary.policy import resolve_policy
 from ..config.loader import save_config
-from ..config.paths import COMMANDS_DIR, DELEGATIONS_DIR, EXTENSIONS_DIR, SKILLS_DIRS
+from ..config.paths import DELEGATIONS_DIR, SKILLS_DIRS
 from ..config.settings import Settings, save
+from ..extensions import ExtensionRegistry, load_extensions, set_default_registry
 from ..memory import MemoryEngineError, MemoryHost, get_engine
 from ..memory.host import ActiveMemory
 from ..model.catalog import Catalog, ModelRef, from_config
@@ -25,7 +26,7 @@ from ..sessions.query import new_session_id
 from .completer import SlashCompleter
 from .render import sanitize
 
-_SOURCE_LABELS = {"project": "项目", "user": "用户", "builtin": "内置"}
+_SOURCE_LABELS = {"project": "项目", "user": "用户", "builtin": "内置", "extension": "扩展"}
 
 
 def _open_memory(settings: Settings) -> ActiveMemory:
@@ -79,11 +80,14 @@ class AppState:
     context_tokens: Optional[int] = None
     # 本会话内已批准的工具调用签名（工具名 + 参数）；同一命令不再重复询问。
     approved: Set[str] = field(default_factory=set)
+    # 用户在审批里选过「本会话总是允许」的工具名；按工具放行，会话结束即失效。
+    tool_allows: Set[str] = field(default_factory=set)
     # 扩展点发现结果：命令模板、技能束、MCP 插件声明、桥接后的插件工具。
     plugin_commands: Dict[str, object] = field(default_factory=dict)
     plugin_skills: Optional[Skills] = None
     skill_sources: Dict[str, str] = field(default_factory=dict)
     plugin_extensions: List = field(default_factory=list)
+    extension_registry: ExtensionRegistry = field(default_factory=ExtensionRegistry)
     extra_tools: List = field(default_factory=list)
     delegation: DelegationRegistry = field(default_factory=lambda: DelegationRegistry(DELEGATIONS_DIR))
     # 项目级扩展的加载摘要；仅交互启动时打印一行。
@@ -101,20 +105,19 @@ class AppState:
         scope = catalog.scope(config.get("enabled_models") or [])
 
         project = plugins.project_dirs() if bool(settings.get("project.enabled")) else None
-        command_dirs = ([(project["commands"], "project")] if project else []) + [(COMMANDS_DIR, "user")]
-        skill_dirs = (
-            ([(project["skills"], "project")] if project and "skills" in trusted else [])
-            + [(d, "user") for d in SKILLS_DIRS]
-            + [(plugins.BUILTIN_SKILLS_DIR, "builtin")]
-        )
-        commands: Dict[str, object] = {}
-        for command in plugins.discover_commands(command_dirs):
-            commands.setdefault(command.name, command)
-        skills, skill_sources = plugins.build_skills(skill_dirs)
-        extension_dirs = [(EXTENSIONS_DIR, "user")]
-        if project and "extensions" in trust.trusted_kinds(project):
-            extension_dirs.insert(0, (project["extensions"], "project"))
-        extensions = plugins.discover_mcp(extension_dirs)
+        discovery = plugins.discover_extensions(project, trusted=trusted, skills_user_dirs=SKILLS_DIRS)
+        commands = discovery.commands
+        skills, skill_sources = discovery.skills, discovery.skill_sources
+        extensions = discovery.mcp
+        registry = ExtensionRegistry()
+        load_extensions(discovery.python, registry, settings)
+        set_default_registry(registry)
+        # 编程式扩展注册的命令并入同一名字空间；文件模板优先，不覆盖已有命令。
+        for spec in registry.commands:
+            home = next((e.path for e in discovery.python if e.name == spec.owner), None)
+            commands.setdefault(spec.name, plugins.CustomCommand(
+                spec.name, home or Path("."), spec.template, "extension",
+            ))
         source_labels = _SOURCE_LABELS
         project_names = [c.name for c in commands.values() if c.source == "project"]
         project_names += [n for n, s in skill_sources.items() if s == "project"]
@@ -122,6 +125,10 @@ class AppState:
         if project_names:
             shown = "、".join(project_names[:6]) + ("…" if len(project_names) > 6 else "")
             project_note = f"已加载项目级扩展 {len(project_names)} 项（{project['root']}）：{shown}"
+        if registry.loaded:
+            project_note += f"编程式扩展 {len(registry.loaded)} 个：{'、'.join(registry.loaded)}。"
+        for name in registry.disabled:
+            logging.getLogger(__name__).warning("编程式扩展 %s 加载失败已禁用", name)
         mcp_functions, mcp_failed = plugins.open_mcp_tools(
             extensions, plugins.mcp_timeout(settings)
         )
@@ -165,6 +172,7 @@ class AppState:
             plugin_skills=skills,
             skill_sources=skill_sources,
             plugin_extensions=extensions,
+            extension_registry=registry,
             extra_tools=extra_tools,
             delegation=delegation,
             project_note=project_note,
@@ -213,6 +221,7 @@ class AppState:
             self.catalog, self.provider, self.model_id, self.mode, self.settings,
             extra_tools=self.extra_tools, skills=self.plugin_skills, memory=self.memory,
             delegation=self.delegation, delegation_models=self.scope(),
+            extensions=self.extension_registry,
         )
         self.completer = SlashCompleter(
             [ref.display for ref in self.scope()], self.settings,

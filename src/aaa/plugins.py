@@ -23,11 +23,13 @@ import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple
 
 from agno.skills import Skills
 from agno.skills.loaders.local import LocalSkills
 from agno.tools.function import Function
+
+from .extensions.loader import PythonExtension, discover_python_extensions
 
 
 class SettingsLike(Protocol):
@@ -220,6 +222,54 @@ def discover_mcp(dirs) -> List[McpExtension]:
                 source=source,
             ))
     return out
+
+
+@dataclass(frozen=True)
+class ExtensionDiscovery:
+    """五类扩展的统一发现结果；只做扫描与信任门控，激活由宿主进行。"""
+
+    commands: Dict[str, CustomCommand]
+    skills: Optional[Skills]
+    skill_sources: Dict[str, str]
+    mcp: List[McpExtension]
+    python: List[PythonExtension]
+    animations_dir: Optional[Path]
+
+
+def discover_extensions(
+    project: Optional[Dict[str, Path]],
+    *,
+    trusted: frozenset = frozenset(),
+    skills_user_dirs: Sequence[Path] = (),
+) -> ExtensionDiscovery:
+    """统一发现入口（aaa 翻译层）：命令、技能、MCP、编程扩展、动画目录。
+
+    `trusted` 是已确认的仓库信任类别；项目级 skills/extensions/animations
+    仅在对应类别受信任时纳入。
+    """
+    command_dirs = ([(project["commands"], "project")] if project else []) + [(COMMANDS_DIR_DEFAULT, "user")]
+    commands: Dict[str, CustomCommand] = {}
+    for command in discover_commands(command_dirs):
+        commands.setdefault(command.name, command)
+
+    skill_dirs = (
+        ([(project["skills"], "project")] if project and "skills" in trusted else [])
+        + [(d, "user") for d in skills_user_dirs]
+        + [(BUILTIN_SKILLS_DIR, "builtin")]
+    )
+    skills, skill_sources = build_skills(skill_dirs)
+
+    extension_dirs = [(EXTENSIONS_DIR_DEFAULT, "user")]
+    if project and "extensions" in trusted:
+        extension_dirs.insert(0, (project["extensions"], "project"))
+    mcp = discover_mcp(extension_dirs)
+    python = discover_python_extensions(extension_dirs)
+
+    animations_dir = project["animations"] if project and "animations" in trusted else None
+    return ExtensionDiscovery(
+        commands=commands, skills=skills, skill_sources=skill_sources,
+        mcp=mcp, python=python, animations_dir=animations_dir,
+    )
 
 
 def toggle_extension(path: Path) -> bool:
