@@ -34,7 +34,7 @@ MiniViking 是与 `src/aaa` 并列、同一 wheel 分发的独立 Python 包：a
 ### 资源导入与技能
 
 - `viking_add_resource` 只做本地文件/目录（不做 URL）：入队 `resource` 任务并立即返回任务 URI；worker 校验类型/大小/数量/深度上限（超限记 `skipped`），按空行切块（默认 4k、最多 20 块），逐块 LLM 摘要后写 `resources/<root>/chunk-NNN.md` 与 `_index.md`。任务状态、失败原因与计数持久化在任务表；`viking_read` 任务 URI 可查状态；重启把 `running` 重置为 `pending` 续跑。
-- `viking_add_skill` 写 `skills/<name>/SKILL.md`（数据，不执行）；默认拒绝覆盖同名，需 `overwrite=true`。不接 aaa 的 `load_skill`，两套技能目录并存。
+- `viking_add_skill` 写 `skills/<name>/SKILL.md`（数据，不执行）；默认拒绝覆盖同名，需 `overwrite=true`。不接 aaa 的技能目录（`agno.skills`），两套技能体系并存。
 
 ### 工具面
 

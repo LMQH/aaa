@@ -1242,15 +1242,23 @@ def _source_tag(item) -> str:
 
 
 def _skills_command(state: AppState) -> None:
-    """列出发现的技能；模型可用 load_skill 工具读取正文。"""
-    if not state.plugin_skills:
+    """列出发现的技能；模型可用 get_skill_instructions 工具读取正文。"""
+    bundle = getattr(state, "plugin_skills", None)
+    if bundle is None:
         emit(state, "没有发现技能。技能放在 ~/.agents/skills/<name>/SKILL.md 或仓库 .aaa/skills/<name>/SKILL.md。")
         return
-    emit(state, f"发现 {len(state.plugin_skills)} 个技能", "bold")
+    sources = getattr(state, "skill_sources", {}) or {}
+    rank = {"project": 0, "user": 1, "builtin": 2}
+    skills = sorted(
+        bundle.get_all_skills(),
+        key=lambda s: (rank.get(sources.get(s.name, "builtin"), 3), s.name),
+    )
+    emit(state, f"发现 {len(skills)} 个技能", "bold")
     emit(state)
-    for skill in state.plugin_skills:
-        desc = skill.description.splitlines()[0] if skill.description else ""
-        emit(state, f"  {skill.name} {_source_tag(skill)}", "")
+    for skill in skills:
+        source = sources.get(str(skill.name), "builtin")
+        desc = str(skill.description or "").splitlines()[0] if skill.description else ""
+        emit(state, f"  {skill.name} [{_SOURCE_LABELS.get(source, source)}]", "")
         emit(state, f"      {desc}", "class:picker.hint")
 
 

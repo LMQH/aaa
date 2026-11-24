@@ -26,7 +26,7 @@ from aaa.memory import (
     MemoryTool,
 )
 from aaa.memory.agno import read_builtin
-from aaa.plugins import BUILTIN_SKILLS_DIR, discover_skills
+from aaa.plugins import BUILTIN_SKILLS_DIR, build_skills
 from aaa.runtime import agent as agent_mod
 from aaa.runtime import prompt
 
@@ -93,7 +93,7 @@ class BuildAgentTest(unittest.TestCase):
         self.enterContext(mock.patch.object(prompt, "SYSTEM_PROMPT_FILE", self.tmp / "SYSTEM.md"))
         self.enterContext(mock.patch.object(prompt, "APPEND_SYSTEM_PROMPT_FILE", self.tmp / "APPEND_SYSTEM.md"))
 
-    def _build(self, settings: Optional[Settings] = None, script: Optional[List] = None, *, skills=(), memory=None):
+    def _build(self, settings: Optional[Settings] = None, script: Optional[List] = None, *, skills=None, memory=None, mode: str = "read-only"):
         """构造一个真实 Agent：模型按脚本回放，数据库落在临时目录。"""
         model = FakeModel(script or [])
         catalog = SimpleNamespace(
@@ -102,7 +102,7 @@ class BuildAgentTest(unittest.TestCase):
             fallbacks=lambda provider, model_id: [],
         )
         agent = agent_mod.build_agent(
-            catalog, "ch", "m1", "read-only", settings or Settings(), extra_tools=[_plugin_tool()],
+            catalog, "ch", "m1", mode, settings or Settings(), extra_tools=[_plugin_tool()],
             skills=skills, memory=memory,
         )
         self.addCleanup(agent.db.db_engine.dispose)
@@ -120,10 +120,10 @@ class BuildAgentTest(unittest.TestCase):
     def test_user_prompt_keeps_native_context_and_uses_skill_references_on_demand(self) -> None:
         (self.tmp / "SYSTEM.md").write_text("自定义基础指令", encoding="utf-8")
         (self.tmp / "APPEND_SYSTEM.md").write_text("用户追加指令", encoding="utf-8")
-        skills = discover_skills([BUILTIN_SKILLS_DIR])
+        skills, _sources = build_skills([(BUILTIN_SKILLS_DIR, "builtin")])
         agent = self._build(skills=skills, script=[
-            tool_call("load_skill", {"name": "create-extension"}),
-            tool_call("load_skill", {"name": "create-extension", "reference": "animations.md"}),
+            tool_call("get_skill_instructions", {"skill_name": "create-extension"}),
+            tool_call("get_skill_reference", {"skill_name": "create-extension", "reference_path": "animations.md"}),
             text("已查阅"),
         ])
         agent.run("怎样自定义开场动画？")
@@ -131,13 +131,31 @@ class BuildAgentTest(unittest.TestCase):
         system = next(message.content for message in requests[0]["messages"] if message.role == "system")
         self.assertIn("自定义基础指令\n\n用户追加指令", system)
         self.assertNotIn("你是运行在用户终端里的 aaa 助手", system)
+        # Agno 技能索引随系统消息注入：技能名与描述在，但正文不预载。
+        self.assertIn("<skills_system>", system)
         self.assertIn("create-extension", system)
         self.assertIn("为 aaa 创建扩展或插件", system)
-        self.assertNotIn("animations.md", system)
-        self.assertNotIn("get_skill_script", {item["function"]["name"] for item in requests[0]["tools"]})
+        self.assertNotIn("创建 aaa 扩展", system)
+        tool_names_in_request = {item["function"]["name"] for item in requests[0]["tools"]}
+        self.assertIn("get_skill_instructions", tool_names_in_request)
+        self.assertIn("get_skill_reference", tool_names_in_request)
+        # read-only 不开放脚本执行（owner 2026-11-24 决定），索引也不宣传脚本。
+        self.assertNotIn("get_skill_script", tool_names_in_request)
+        self.assertNotIn("get_skill_script", system)
         results = [message.content for message in requests[-1]["messages"] if message.role == "tool"]
         self.assertIn("animations.md", results[0])
         self.assertIn("ANIMATION = frames", results[1])
+
+    def test_skill_script_tool_only_outside_read_only(self) -> None:
+        skills, _sources = build_skills([(BUILTIN_SKILLS_DIR, "builtin")])
+        agent = self._build(skills=skills, script=[text("好")], mode="workspace-write")
+        agent.run("你好")
+        tools = {item["function"]["name"] for item in agent.model.invocations[0]["tools"]}
+        self.assertIn("get_skill_script", tools)
+        agent_ro = self._build(skills=skills, script=[text("好")])
+        agent_ro.run("你好")
+        tools_ro = {item["function"]["name"] for item in agent_ro.model.invocations[0]["tools"]}
+        self.assertNotIn("get_skill_script", tools_ro)
 
     def test_manager_uses_original_model_and_db(self) -> None:
         agent = self._build(memory="builtin")

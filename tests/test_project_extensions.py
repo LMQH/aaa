@@ -66,12 +66,26 @@ class DiscoveryTest(unittest.TestCase):
                "---\nname: brief\ndescription: 项目技能\n---\nP")
         _write(self.user / "skills" / "brief" / "SKILL.md",
                "---\nname: brief\ndescription: 用户技能\n---\nU")
-        found = plugins.discover_skills([
+        skills, sources = plugins.build_skills([
             (self.project / "skills", "project"),
             (self.user / "skills", "user"),
         ])
-        self.assertEqual([(s.name, s.source, s.description) for s in found],
-                         [("brief", "project", "项目技能")])
+        # Agno 后到覆盖；loader 倒序传入后等效 aaa 的先到先得（project 优先）。
+        found = {s.name: s.description for s in skills.get_all_skills()}
+        self.assertEqual(found, {"brief": "项目技能"})
+        self.assertEqual(sources, {"brief": "project"})
+
+    def test_skill_source_uses_frontmatter_name(self) -> None:
+        # 目录名与 frontmatter name 不同：生效名与来源标签都按 frontmatter 名。
+        _write(self.user / "skills" / "foo" / "SKILL.md",
+               "---\nname: create-agent\ndescription: 用户同名\n---\nU")
+        skills, sources = plugins.build_skills([
+            (self.user / "skills", "user"),
+            (plugins.BUILTIN_SKILLS_DIR, "builtin"),
+        ])
+        winner = skills.get_skill("create-agent")
+        self.assertEqual(winner.description, "用户同名")
+        self.assertEqual(sources.get("create-agent"), "user")
 
 
 class ProjectInstructionsTest(unittest.TestCase):
@@ -116,16 +130,38 @@ class SettingsKeysTest(unittest.TestCase):
 
 class SkillsLabelTest(unittest.TestCase):
     def test_command_marks_sources(self) -> None:
-        state = SimpleNamespace(plugin_skills=[
-            plugins.Skill("alpha", Path("/tmp/a/SKILL.md"), "项目技能", "project"),
-            plugins.Skill("beta", Path("/tmp/b/SKILL.md"), "内置技能", "builtin"),
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (tmp / "project_skills" / "alpha").mkdir(parents=True)
+        (tmp / "project_skills" / "alpha" / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: 项目技能\n---\nP", encoding="utf-8")
+        (tmp / "builtin_skills" / "beta").mkdir(parents=True)
+        (tmp / "builtin_skills" / "beta" / "SKILL.md").write_text(
+            "---\nname: beta\ndescription: 内置技能\n---\nB", encoding="utf-8")
+        skills, sources = plugins.build_skills([
+            (tmp / "builtin_skills", "builtin"),
+            (tmp / "project_skills", "project"),
         ])
+        state = SimpleNamespace(plugin_skills=skills, skill_sources=sources)
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             self.assertTrue(handle_command(state, "/skills"))
         output = buf.getvalue()
         self.assertIn("[项目]", output)
         self.assertIn("[内置]", output)
+
+    def test_command_survives_malformed_frontmatter(self) -> None:
+        # description 为列表、name 缺失时 /skills 不抛异常，照常列出。
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        d = tmp / "skills"
+        (d / "weird").mkdir(parents=True)
+        (d / "weird" / "SKILL.md").write_text(
+            "---\ndescription:\n  - 第一行\n  - 第二行\n---\n正文", encoding="utf-8")
+        skills, sources = plugins.build_skills([(d, "user")])
+        state = SimpleNamespace(plugin_skills=skills, skill_sources=sources)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertTrue(handle_command(state, "/skills"))
+        self.assertIn("weird", buf.getvalue())
 
 
 if __name__ == "__main__":

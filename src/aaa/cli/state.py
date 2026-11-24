@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from agno.agent import Agent
 from agno.session import AgentSession
+from agno.skills import Skills
 
 from .. import plugins, trust
 from ..boundary.policy import resolve_policy
@@ -78,9 +79,10 @@ class AppState:
     context_tokens: Optional[int] = None
     # 本会话内已批准的工具调用签名（工具名 + 参数）；同一命令不再重复询问。
     approved: Set[str] = field(default_factory=set)
-    # 扩展点发现结果：命令模板、技能、MCP 插件声明、桥接后的插件工具。
+    # 扩展点发现结果：命令模板、技能束、MCP 插件声明、桥接后的插件工具。
     plugin_commands: Dict[str, object] = field(default_factory=dict)
-    plugin_skills: List = field(default_factory=list)
+    plugin_skills: Optional[Skills] = None
+    skill_sources: Dict[str, str] = field(default_factory=dict)
     plugin_extensions: List = field(default_factory=list)
     extra_tools: List = field(default_factory=list)
     delegation: DelegationRegistry = field(default_factory=lambda: DelegationRegistry(DELEGATIONS_DIR))
@@ -90,8 +92,8 @@ class AppState:
     report_lines: Optional[List] = None
 
     @classmethod
-    def start(cls, config: Dict, settings: Settings) -> "AppState":
-        """按归一后的配置构造主 Agent，发现扩展点。"""
+    def start(cls, config: Dict, settings: Settings, trusted: frozenset = frozenset()) -> "AppState":
+        """按归一后的配置构造主 Agent，发现扩展点。`trusted` 是已确认的仓库信任类别。"""
         catalog = from_config(config, settings)
         default = config["default"]
         provider, model_id = default["provider"], default["model"]
@@ -101,21 +103,21 @@ class AppState:
         project = plugins.project_dirs() if bool(settings.get("project.enabled")) else None
         command_dirs = ([(project["commands"], "project")] if project else []) + [(COMMANDS_DIR, "user")]
         skill_dirs = (
-            ([(project["skills"], "project")] if project else [])
+            ([(project["skills"], "project")] if project and "skills" in trusted else [])
             + [(d, "user") for d in SKILLS_DIRS]
             + [(plugins.BUILTIN_SKILLS_DIR, "builtin")]
         )
         commands: Dict[str, object] = {}
         for command in plugins.discover_commands(command_dirs):
             commands.setdefault(command.name, command)
-        skills = plugins.discover_skills(skill_dirs)
+        skills, skill_sources = plugins.build_skills(skill_dirs)
         extension_dirs = [(EXTENSIONS_DIR, "user")]
         if project and "extensions" in trust.trusted_kinds(project):
             extension_dirs.insert(0, (project["extensions"], "project"))
         extensions = plugins.discover_mcp(extension_dirs)
         source_labels = _SOURCE_LABELS
         project_names = [c.name for c in commands.values() if c.source == "project"]
-        project_names += [s.name for s in skills if s.source == "project"]
+        project_names += [n for n, s in skill_sources.items() if s == "project"]
         project_note = ""
         if project_names:
             shown = "、".join(project_names[:6]) + ("…" if len(project_names) > 6 else "")
@@ -161,6 +163,7 @@ class AppState:
             completer=completer,
             plugin_commands=commands,
             plugin_skills=skills,
+            skill_sources=skill_sources,
             plugin_extensions=extensions,
             extra_tools=extra_tools,
             delegation=delegation,

@@ -825,7 +825,7 @@ class PluginsTest(unittest.TestCase):
         self.assertEqual([c.name for c in cmds], ["review"])
         self.assertEqual(cmds[0].template, "审查 $ARGUMENTS")
 
-    def test_discover_skills_nested_and_frontmatter(self) -> None:
+    def test_build_skills_flat_and_frontmatter(self) -> None:
         d = self.tmp / "skills"
         (d / "alpha").mkdir(parents=True)
         (d / "alpha" / "SKILL.md").write_text(
@@ -835,9 +835,11 @@ class PluginsTest(unittest.TestCase):
         (d / "cat" / "beta" / "SKILL.md").write_text(
             "---\nname: beta\ndescription: 嵌套技能\n---\n正文B", encoding="utf-8"
         )
-        skills = plugins.discover_skills([d])
-        self.assertEqual([s.name for s in skills], ["alpha", "beta"])
-        self.assertEqual(plugins.skill_body(skills[0].path), "正文A")
+        skills, sources = plugins.build_skills([(d, "user")])
+        # Agno 只扫一层：分类目录下的技能不进发现结果。
+        self.assertEqual([s.name for s in skills.get_all_skills()], ["alpha"])
+        self.assertEqual(sources, {"alpha": "user"})
+        self.assertEqual(json.loads(skills._get_skill_instructions("alpha"))["instructions"], "正文A")
 
     def test_mcp_discovery_and_toggle(self) -> None:
         d = self.tmp / "extensions"
@@ -857,50 +859,39 @@ class PluginsTest(unittest.TestCase):
     def test_skill_tool_known_and_unknown(self) -> None:
         d = self.tmp / "skills"
         (d / "alpha").mkdir(parents=True)
-        (d / "alpha" / "SKILL.md").write_text("---\nname: alpha\n---\n正文A", encoding="utf-8")
-        tool = plugins.make_skill_tool(plugins.discover_skills([d]))
-        self.assertEqual(tool("alpha"), "正文A")
-        self.assertIn("未知技能", tool("nope"))
+        (d / "alpha" / "SKILL.md").write_text("---\nname: alpha\ndescription: d\n---\n正文A", encoding="utf-8")
+        skills, _ = plugins.build_skills([(d, "user")])
+        self.assertEqual(json.loads(skills._get_skill_instructions("alpha"))["instructions"], "正文A")
+        self.assertIn("not found", skills._get_skill_instructions("nope"))
 
-    def test_skill_references_cannot_read_outside_the_reference_directory(self) -> None:
+    def test_skill_references_confined_to_reference_directory(self) -> None:
         skill = self.tmp / "skills" / "alpha"
         references = skill / "references"
         references.mkdir(parents=True)
-        (skill / "SKILL.md").write_text("技能正文", encoding="utf-8")
+        (skill / "SKILL.md").write_text("---\nname: alpha\ndescription: d\n---\n技能正文", encoding="utf-8")
         (references / "guide.md").write_text("公开指南", encoding="utf-8")
         private = skill / "private.md"
         private.write_text("目录外内容", encoding="utf-8")
-        tool = plugins.make_skill_tool(plugins.discover_skills([skill.parent]))
-        self.assertEqual(tool("alpha", "guide.md"), "公开指南")
-        self.assertIn("必须是单个", tool("alpha", "../private.md"))
+        skills, _ = plugins.build_skills([(skill.parent, "user")])
+        # 目录内引用可读；目录外路径不在发现列表里，读不到。
+        self.assertEqual(json.loads(skills._get_skill_reference("alpha", "guide.md"))["content"], "公开指南")
+        self.assertIn("not found", skills._get_skill_reference("alpha", "../private.md"))
         if os.name != "nt":
+            # 发现期就列入的符号链接，若解析到引用目录外，Agno 的路径安全检查拒绝。
             (references / "alias.md").symlink_to(private)
-            self.assertIn("无法读取", tool("alpha", "alias.md"))
+            skills, _ = plugins.build_skills([(skill.parent, "user")])
+            self.assertIn("Invalid reference path", skills._get_skill_reference("alpha", "alias.md"))
 
     @unittest.skipIf(os.name == "nt", "Windows 创建符号链接可能需要额外权限")
-    def test_linked_reference_root_is_neither_a_resource_nor_a_second_skill(self) -> None:
+    def test_linked_reference_root_is_not_a_second_skill(self) -> None:
         skill = self.tmp / "skills" / "alpha"
         skill.mkdir(parents=True)
-        (skill / "SKILL.md").write_text("技能正文", encoding="utf-8")
-        (skill / "private.md").write_text("目录外内容", encoding="utf-8")
+        (skill / "SKILL.md").write_text("---\nname: alpha\ndescription: d\n---\n技能正文", encoding="utf-8")
         (skill / "references").symlink_to(".", target_is_directory=True)
-        skills = plugins.discover_skills([skill.parent])
-        self.assertEqual([item.name for item in skills], ["alpha"])
-        self.assertIn("无法读取", plugins.make_skill_tool(skills)("alpha", "private.md"))
-
-    @unittest.skipIf(os.name == "nt", "Windows 创建符号链接可能需要额外权限")
-    def test_body_link_cannot_escape_at_discovery_or_read_time(self) -> None:
-        skill = self.tmp / "skills" / "alpha"
-        skill.mkdir(parents=True)
-        private = self.tmp / "private.md"
-        private.write_text("目录外内容", encoding="utf-8")
-        body = skill / "SKILL.md"
-        body.write_text("技能正文", encoding="utf-8")
-        tool = plugins.make_skill_tool(plugins.discover_skills([skill.parent]))
-        body.unlink()
-        body.symlink_to(private)
-        self.assertEqual(plugins.discover_skills([skill.parent]), [])
-        self.assertIn("无法读取", tool("alpha"))
+        skills, sources = plugins.build_skills([(skill.parent, "user")])
+        # references/ 没有 SKILL.md，不会成为第二个技能；来源标签不受符号链接影响。
+        self.assertEqual([s.name for s in skills.get_all_skills()], ["alpha"])
+        self.assertEqual(sources, {"alpha": "user"})
 
     def test_is_external_tool(self) -> None:
         self.assertTrue(is_external_tool("mcp_echo"))
@@ -942,9 +933,10 @@ class PluginsTest(unittest.TestCase):
             )
 
     def test_builtin_skill_discovered(self) -> None:
-        skills = plugins.discover_skills([plugins.BUILTIN_SKILLS_DIR])
-        self.assertIn("create-extension", [s.name for s in skills])
-        description = next(s.description for s in skills if s.name == "create-extension")
+        skills, sources = plugins.build_skills([(plugins.BUILTIN_SKILLS_DIR, "builtin")])
+        self.assertIn("create-extension", [s.name for s in skills.get_all_skills()])
+        self.assertEqual(sources.get("create-extension"), "builtin")
+        description = next(s.description for s in skills.get_all_skills() if s.name == "create-extension")
         self.assertTrue(description.startswith("为 aaa 创建扩展"), description)
 
 

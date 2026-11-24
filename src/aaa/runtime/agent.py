@@ -8,19 +8,20 @@ from agno.compaction import Compaction
 from agno.db.sqlite import SqliteDb
 from agno.memory import MemoryManager
 from agno.models.base import Model
+from agno.skills import Skills
 from agno.tools.function import Function
 
-from ..boundary.policy import PolicySource, resolve_policy
+from ..boundary.policy import MODE_READ, PolicySource, resolve_policy
 from ..config.paths import DATA_DIR, DB_FILE
 from ..context.params import compact_threshold, compaction_budget, history_runs
 from ..memory import MemoryEngineError
 from ..memory.host import ActiveMemory, MemoryHost
 from ..model.catalog import Catalog, ModelRef
-from ..plugins import Skill, make_skill_tool
+from ..plugins import GatedSkills
 from ..tools.assemble import build_tools, tool_names
 from .delegation import make_delegation_tools
 from .delegation_registry import DelegationRegistry
-from .prompt import instructions_for, project_instructions, skill_context
+from .prompt import instructions_for, project_instructions
 
 
 class SettingsLike(Protocol):
@@ -49,11 +50,18 @@ def tools_for_mode(mode: str, settings: SettingsLike, policy: PolicySource = res
     )
 
 
-def _extension_tools(extra_tools: Optional[List], skills: Sequence[Skill]) -> list:
-    tools = list(extra_tools or ())
-    if skills:
-        tools.append(make_skill_tool(skills))
-    return tools
+def _extension_tools(extra_tools: Optional[List]) -> list:
+    return list(extra_tools or ())
+
+
+def skills_for_mode(skills: Optional[Skills], mode: str) -> Optional[Skills]:
+    """read-only 不开放技能脚本执行（owner 2026-11-24 决定）：换用无脚本变体。
+
+    非 Skills 输入原样返回，兼容测试替身。
+    """
+    if not isinstance(skills, Skills) or mode != MODE_READ:
+        return skills
+    return GatedSkills(skills.loaders, allow_scripts=False)
 
 
 def _session_db() -> SqliteDb:
@@ -119,7 +127,7 @@ def _host_instructions(memory: MemoryHost, instructions: str) -> str:
 def system_instructions(
     mode: str, tools: list, memory: ActiveMemory, *, project_max_chars: int = 0
 ) -> str:
-    """系统提示词正文（不含技能索引 additional_context）；build_agent 与 /insight 同源。"""
+    """系统提示词正文（技能索引由 Agno skills 注入，不在这里）；build_agent 与 /insight 同源。"""
     instructions = instructions_for(mode, tool_names(tools), project_instructions(project_max_chars))
     if isinstance(memory, MemoryHost):
         instructions = _host_instructions(memory, instructions)
@@ -159,7 +167,7 @@ def build_agent(
     settings: SettingsLike,
     extra_tools: Optional[List] = None,
     *,
-    skills: Sequence[Skill] = (),
+    skills: Optional[Skills] = None,
     memory: ActiveMemory = None,
     delegation: Optional[DelegationRegistry] = None,
     delegation_models: Sequence[ModelRef] = (),
@@ -181,7 +189,7 @@ def build_agent(
         on_context_overflow=True,
         enforce_min_fold_ratio=True,
     )
-    all_tools = tools_for_mode(mode, settings) + _extension_tools(extra_tools, skills)
+    all_tools = tools_for_mode(mode, settings) + _extension_tools(extra_tools)
     if delegation is not None:
         all_tools += make_delegation_tools(
             delegation, catalog, delegation_models, ModelRef(provider, model_id),
@@ -203,14 +211,14 @@ def build_agent(
         compaction=compaction,
         # 超过 16k 字符的工具结果落 AgentFS，上下文只留信封与回读方式。
         offload_tool_results=True,
-        # MCP 桥接与技能读取作为常规工具传给 Agno。
+        # MCP 桥接作为常规工具传给 Agno；技能索引与读取工具由 Agno skills 原生装配。
         tools=all_tools,
+        skills=skills_for_mode(skills, mode),
         **memory_options,
         # 内置记忆沿用会话库；外置引擎不接触该库。
         db=db,
         # Agno 把 session metadata 写进会话记录；`-c` 据此只续接当前目录的会话。
         metadata={"cwd": str(Path.cwd())},
-        additional_context=skill_context(skills),
         # 把同一 session 的历史消息带进下一轮；轮数上限只是防止无限增长。
         add_history_to_context=True,
         num_history_runs=history_runs(settings),

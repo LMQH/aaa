@@ -296,7 +296,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     trusted = trust_mod.ensure(project, interactive=options.interactive, always=options.trust_repo)
 
     try:
-        state = AppState.start(config, settings)
+        state = AppState.start(config, settings, trusted=trusted)
     except MemoryEngineError as exc:
         print(f"{GLYPH['fail']} {exc}", file=sys.stderr)
         print("用 /memory（或 /memory engine <引擎>）重新选择记忆引擎后重启；也可以直接改 ~/.aaa/config.toml。", file=sys.stderr)

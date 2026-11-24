@@ -1,14 +1,13 @@
-"""aaa 自有指令和技能目录；系统消息仍由 Agno 组装。"""
+"""aaa 自有指令；系统消息（含技能索引）仍由 Agno 组装。"""
 
-import json
 import logging
 import os
 from importlib.resources import files
 from pathlib import Path
-from typing import Collection, Optional, Sequence
+from typing import Collection
 
 from ..config.paths import APPEND_SYSTEM_PROMPT_FILE, SYSTEM_PROMPT_FILE
-from ..plugins import Skill, project_dirs
+from ..plugins import project_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +51,3 @@ def instructions_for(mode: str, tools: Collection[str], project_text: str = "") 
     if "run_powershell" in tools:
         parts.append(_builtin("powershell.md"))
     return "\n\n".join(parts)
-
-
-def skill_context(skills: Sequence[Skill]) -> Optional[str]:
-    if not skills:
-        return None
-    entries = [{"name": skill.name, "description": skill.description} for skill in skills]
-    return _builtin("skills.md") + "\n\n" + json.dumps(entries, ensure_ascii=False)

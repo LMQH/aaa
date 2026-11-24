@@ -4,7 +4,7 @@ description: 为 aaa 创建扩展或插件：启动动画、自定义斜杠命�
 ---
 # 创建 aaa 扩展
 
-选择用户当前要处理的类型，先调用 `load_skill(name="create-extension", reference="对应文件名")` 读取该指南，再按它生成内容或指导操作。一次只读需要的指南。
+选择用户当前要处理的类型，先调用 `get_skill_instructions(skill_name="create-extension")` 读取本技能，再按需用 `get_skill_reference(skill_name="create-extension", reference_path="对应文件名")` 读取该指南，然后按它生成内容或指导操作。一次只读需要的指南。
 
 | 用户要做的事 | 引用文件名 | 写入方式 |
 |---|---|---|

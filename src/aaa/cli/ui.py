@@ -28,7 +28,7 @@ COMMANDS = [
     ("/export", "导出当前会话为 markdown（可跟路径）"),
     ("/image", "发送本地图片给模型：/image <路径>"),
     ("/plugin", "查看或启停 MCP 插件（重启生效）：/plugin <名称>"),
-    ("/skills", "列出发现的技能（模型可用 load_skill 读取）"),
+    ("/skills", "列出发现的技能（模型可用 get_skill_instructions 读取）"),
     ("/redo", "重新生成最后一轮回复"),
     ("/edit", "编辑上一条用户消息重发（分叉，原轮保留）：/edit <新消息>"),
     ("/compact", "立即压缩当前会话上下文"),

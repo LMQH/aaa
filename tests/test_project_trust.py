@@ -51,6 +51,24 @@ class FingerprintTest(TrustBase):
         self.assertTrue(trust_mod.revoke(str(self.project["root"])))
         self.assertEqual(trust_mod.entries(), {})
 
+    def test_skills_kind_covers_skill_dirs_and_scripts(self) -> None:
+        skill = self.project["skills"] / "toy"
+        _write(skill / "SKILL.md", "---\nname: toy\n---\n正文")
+        _write(skill / "scripts" / "run.sh", "echo ok\n")
+        # 没有 SKILL.md 的目录不计入指纹。
+        _write(self.project["skills"] / "loose" / "notes.md", "x")
+
+        fp = trust_mod.fingerprint(self.project, "skills")
+        self.assertTrue(fp)
+        files = trust_mod.describe(self.project, "skills")
+        self.assertIn(".aaa/skills/toy/scripts/run.sh", files)
+        self.assertNotIn(".aaa/skills/loose/notes.md", files)
+
+        trust_mod.approve(self.project, ["skills"])
+        self.assertIn("skills", trust_mod.trusted_kinds(self.project))
+        _write(skill / "scripts" / "run.sh", "echo changed\n")
+        self.assertNotIn("skills", trust_mod.trusted_kinds(self.project))
+
 
 class EnsureTest(TrustBase):
     def test_non_interactive_never_asks(self) -> None:
@@ -164,6 +182,40 @@ class AnimationGateTest(unittest.TestCase):
         animation = animations.load("evil", dirs=(anim_dir,))
         self.assertTrue(marker.exists())
         self.assertTrue(callable(getattr(animation, "frames", None)))
+
+
+class SkillTrustGateTest(unittest.TestCase):
+    def test_project_skills_load_only_when_trusted(self) -> None:
+        from fixtures import FakeModel, text
+
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (root / ".git").mkdir()
+        _write(root / ".aaa" / "skills" / "brief" / "SKILL.md",
+               "---\nname: brief\ndescription: 项目技能\n---\nP")
+        store = root / "repos.json"
+        config = {"default": {"provider": "p", "model": "m"}}
+        catalog = SimpleNamespace(
+            require=lambda *_: (None, SimpleNamespace(context_window=100_000)),
+            scope=lambda _: [], build=lambda *_: FakeModel([text("ok")]), fallbacks=lambda *_: [],
+        )
+
+        def start(trusted):
+            with mock.patch.object(trust_mod, "TRUST_FILE", store), \
+                 mock.patch("aaa.cli.state.from_config", return_value=catalog), \
+                 mock.patch("aaa.cli.state.plugins.discover_mcp", return_value=[]), \
+                 mock.patch("aaa.runtime.agent.DATA_DIR", root), \
+                 mock.patch("aaa.runtime.agent.DB_FILE", root / "sessions.db"), \
+                 contextlib.chdir(root), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                from aaa.cli.state import AppState
+                state = AppState.start(config, Settings(), trusted=trusted)
+                try:
+                    return dict(state.skill_sources)
+                finally:
+                    state.close_memory()
+
+        self.assertNotIn("brief", start(frozenset()))
+        self.assertEqual(start(frozenset({"skills"})).get("brief"), "project")
 
 
 class TrustCommandTest(TrustBase):

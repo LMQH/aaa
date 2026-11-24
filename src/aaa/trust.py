@@ -3,7 +3,9 @@
 只对「会执行代码或拉起外部进程」的项目级内容生效：
 - animations、memory_engines：进程内代码；
 - extensions：MCP 声明，会 spawn 外部命令（加载后每次工具调用仍逐次审批）。
-纯文本（commands、skills、AGENTS.md）不经过本模块。
+纯文本（commands、AGENTS.md）与用户目录技能不经过本模块；项目级技能纳入 `skills`
+类别——其正文与 `scripts/` 执行面（owner 已接受该信任面，见 `docs/extending/skills.md`）
+都随仓库信任一起确认，未信任时整个项目技能目录不加载。
 
 记录值是以下三种之一：`<指纹>` 只信任该内容（内容变化后重新询问）、`*` 始终信任、
 `!<指纹>` 该内容已拒绝（内容变化后重新询问）。交互启动时把全部待决类别合并成一次询问，
@@ -21,8 +23,13 @@ from typing import Callable, Dict, Optional, Sequence, Set
 
 from .config.paths import TRUST_FILE
 
-KINDS = ("animations", "memory_engines", "extensions")
-KIND_LABELS = {"animations": "启动动画", "memory_engines": "记忆引擎", "extensions": "MCP 扩展"}
+KINDS = ("animations", "memory_engines", "extensions", "skills")
+KIND_LABELS = {
+    "animations": "启动动画",
+    "memory_engines": "记忆引擎",
+    "extensions": "MCP 扩展",
+    "skills": "技能（含可执行脚本）",
+}
 # 记录值：`<指纹>` 只信任该内容；`*` 始终信任；`!<指纹>` 该内容已拒绝。
 ALWAYS = "*"
 DENY_PREFIX = "!"
@@ -37,7 +44,14 @@ def _kind_files(project: Dict[str, Path], kind: str) -> list[Path]:
         return []
     if kind in ("animations", "memory_engines"):
         return sorted(p for p in base.glob("*.py") if p.is_file())
-    files: list[Path] = []
+    if kind == "skills":
+        files: list[Path] = []
+        for sub in sorted(base.iterdir()):
+            if not sub.is_dir() or not (sub / "SKILL.md").is_file():
+                continue
+            files.extend(sorted(p for p in sub.rglob("*") if p.is_file()))
+        return files
+    files = []
     for sub in sorted(base.iterdir()):
         if not sub.is_dir() or not (sub / "extension.toml").is_file():
             continue

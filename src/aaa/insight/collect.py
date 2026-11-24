@@ -8,7 +8,7 @@ from typing import Any, List, Optional
 
 from ..memory.host import MemoryHost
 from ..runtime.agent import (
-    skill_context,
+    skills_for_mode,
     system_instructions,
     tool_names,
     tools_for_mode,
@@ -118,7 +118,9 @@ def collect(state: Any) -> Insight:
         state.mode, tools, memory,
         project_max_chars=int(state.settings.get("project.instructions_max_chars")),
     )
-    skill_text = skill_context(getattr(state, "plugin_skills", ()) or ()) or ""
+    skills_bundle = skills_for_mode(getattr(state, "plugin_skills", None), state.mode)
+    snippet_fn = getattr(skills_bundle, "get_system_prompt_snippet", None)
+    skill_text = snippet_fn() if callable(snippet_fn) else ""
 
     try:
         builtin_names = set(tool_names(tools_for_mode(state.mode, state.settings)))
@@ -126,6 +128,10 @@ def collect(state: Any) -> Insight:
         builtin_names = set()
         warnings.append("内置工具清单读取失败，工具未按内置/自定义分栏")
     payloads = tool_schema_payloads(tools)
+    skills_tools_fn = getattr(skills_bundle, "get_tools", None)
+    if callable(skills_tools_fn):
+        # Agno 的技能读取工具按轮动态追加，不在 agent.tools 上；单独计入自定义栏。
+        payloads += tool_schema_payloads(skills_tools_fn())
     builtin_payloads = [item for item in payloads if item.get("name") in builtin_names]
     custom_payloads = [item for item in payloads if item.get("name") not in builtin_names]
 
@@ -168,7 +174,7 @@ def collect(state: Any) -> Insight:
         Segment("3", "自定义工具", count_tool_schemas(custom_payloads, state.model_id),
                 f"{len(custom_payloads)} 个 schema"),
         Segment("4", "技能索引", count_text(skill_text, state.model_id),
-                "additional_context，随系统消息发送"),
+                "Agno <skills_system>，随系统消息发送"),
         Segment("5a", "记忆注入", memory_count, "见基础提示词", memory_note),
         Segment("5b", "压缩摘要", count_text(summary_text, state.model_id), "Agno 压缩摘要条目"),
         Segment("6", "用户消息", count_text(user_text, state.model_id), f"{len(runs)} 轮"),

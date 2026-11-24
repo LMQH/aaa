@@ -10,7 +10,7 @@ aaa 的开放面分两类：**加文件的插件**与**改配置的自定义**�
 | 斜杠命令 | `~/.aaa/commands/<name>.md` | Markdown 提示词模板 | 下次启动 | 纯文本 |
 | MCP 扩展 | `~/.aaa/extensions/<name>/extension.toml` | TOML 的 `[mcp]` 段 | 下次启动 | 外部工具，每次执行都审批 |
 | 外置记忆引擎 | `~/.aaa/memory_engines/<id>.py` 或 entry point `aaa.memory_engines` | 工厂接收独立数据目录；可声明工具与提示块 | 通过 `/memory` 菜单选择，重启生效 | 受信任的进程内代码 |
-| 技能 | `~/.agents/skills/<name>/SKILL.md` | frontmatter + 正文 | 下次启动 | 纯文本 |
+| 技能 | `~/.agents/skills/<name>/SKILL.md` | frontmatter + 正文，可含 `references/` 与 `scripts/` | 下次启动 | 文本 + 脚本执行面（见 `skills.md`） |
 | 渠道与模型 | `~/.aaa/secret.yaml` | YAML v2 | 重启 | 含密钥，文件权限 0600 |
 | 配置项 | `~/.aaa/config.toml` | 经 `/config` 修改 | 逐键不同 | — |
 | 项目级扩展 | 仓库根 `.aaa/`：`commands`、`skills`、`extensions`、`animations`、`memory_engines` | 同用户级格式，另加仓库根 `AGENTS.md` | 下次启动 | 文本自动；代码类需仓库信任（`/trust`） |
@@ -54,7 +54,7 @@ aaa 的开放面分两类：**加文件的插件**与**改配置的自定义**�
 
 写文件的插件不等价：
 
-- 命令模板与技能是**纯文本**，只进入提示词，不执行；
+- 命令模板与 AGENTS.md 是**纯文本**，只进入提示词，不执行；技能正文同样是文本，但其 `scripts/` 子目录里的脚本可由模型经 `get_skill_script` 执行（见 `skills.md`）；
 - MCP 扩展是**声明**，工具来自外部进程，名字加 `mcp_` 前缀，且每次执行都要求确认；
 - 启动动画是 **Python 代码**，在启动时于本进程执行，没有审批环节；
 - 外置记忆引擎是 **Python 代码**，仅在选中后于进程启动时加载，无沙箱；不接管 Agent 循环。

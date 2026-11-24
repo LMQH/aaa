@@ -71,6 +71,19 @@
 
 按工作线分组，只保留最新证据；历史批次在版本控制记录中。
 
+### 技能装配移交 Agno（2026-11-24）
+
+- 环境：macOS arm64，`.venv` Python 3.13，agno 3.1.12；本机真实技能数据（project 1 + user 89 + builtin 4）。
+- 变更：技能发现/披露/读取整体移交 `agno.skills`——`plugins.build_skills`（loader 按 builtin → user → project，`validate=False`）、`Agent(skills=…)` 原生注入 `<skills_system>` 索引与 `get_skill_instructions`/`get_skill_reference`/`get_skill_script` 三工具；删除自建 `discover_skills`/`skill_body`/`make_skill_tool`/`skill_context` 与 `prompts/skills.md`；`create-extension` 引用改为 `references → docs/extending` 符号链接，打包双路径适配（wheel 直构跟随链接收集、sdist exclude 链接 + force-include 实文件，`uv build --wheel` 与 sdist→wheel 均验证无重复）；`/skills`、`/insight`、内置技能正文与 `docs/extending/skills.md` 同步更新。脚本执行进模型信任面，owner 已明确接受（2026-11-24 本会话）。
+- 命令：`./tests/run.sh`；`plugins.build_skills` 真实数据装配；`uv build` 后核对 wheel 内 `create-extension/references`。
+- 预期依据：`src/aaa/runtime/DESIGN.md` 装配节、`docs/extending/skills.md`、agno `skills/agent_skills.py`。
+- 结果：353 项 OK；真实装配 94 个技能（来源分布 1/89/4）、同名覆盖语义 project > user > builtin 与迁移前一致、snippet 约 3.9 万字符含 `<skills_system>`、三技能工具在列；wheel 内 9 份 `references/*.md` 实文件齐全；符号链接逃逸在发现后仍被路径安全检查拒绝。
+- 证据位置：本节与 `tests/run.sh` 输出；`dist/` 构建产物验证后保留未删（gitignore 覆盖，不入库）。
+- 未覆盖：`get_skill_script(execute=true)` 对真实技能的执行未实测（QA 订正：本机 89 个用户技能中 7 个带 `scripts/`，共 29 个脚本，如 lark-sheets 9 个；QA 用临时目录合成脚本验证了执行通路）；Windows 布局未跑。
+- D1 决策与收紧（owner 2026-11-24 本会话拍板，选项 c）：技能纳入仓库信任类别——`trust.KINDS` 新增 `skills`（指纹覆盖 `.aaa/skills/<名>/` 全部文件，含 `scripts/`），项目技能目录仅在信任后装配（`AppState.start(trusted=…)`，非交互未信任时跳过并提示 `--trust-repo`）；read-only 不开放脚本执行——`runtime.skills_for_mode` 在合并点换用 `plugins.GatedSkills`（移除 `get_skill_script` 工具，索引中脚本清单置 `none` 且不宣传该工具），`/insight` 同步按模式计数。残余：workspace-write 非交互不带 `--allow-shell` 时技能脚本仍可执行（owner 仅限定 read-only）。
+- 变更附带影响：分类目录 `<分类>/<技能名>/SKILL.md` 不再被发现（Agno 只扫一层，静默丢弃）；技能索引体积从约 6,946 tokens 增至 12,306 tokens（索引现列出引用与脚本清单），每轮随系统消息发送。
+- 独立 QA（`QaSkillMigration`，43m20s，只读；受审修订 HEAD `943e313` + 工作区 diff）：主流程验收 1–4 通过（353 项 OK、真实装配 94 个技能且来源/覆盖方向正确、三工具正文与引用逐份比对一致、越界路径被拒、系统提示含 `<skills_system>` 且无正文泄漏）；发现并推动修复 `uv build --wheel` 直构失败（符号链接 + force-include 双份写入，R2 打包配置复核通过）；缺陷 D3–D8（miniviking 文档残留、来源标签按目录名而非 frontmatter 名、四处「纯文本不执行」过期表述、畸形 frontmatter 使 `/skills` 抛异常、DESIGN/HANDOFF 旧签名）当轮已全部修复并补 D4/D6 回归测试；D1（技能脚本执行绕过权限模式与 `--allow-shell`，含未信任仓库的 `.aaa/skills` 脚本）待 owner 决定。防假测试 11 处改错抓到 6 处；`/insight` 接线与排序等 5 处测试缺口未补。证据目录 `/tmp/aaa_qa_skills.Ba3e2a/`。
+
 ### 仓库、CI 与发布门（2026-11-24）
 
 - `main` 已推送；PR #1（Dependabot `setup-uv`）已 squash 合并，合并后 CI run `45210930919` 的 `test`、`secret-scan`、`lint` 全部 success。

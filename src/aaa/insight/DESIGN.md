@@ -23,7 +23,7 @@
 | 1 | 基础提示词 | `runtime.prompt`：`SYSTEM.md` 内置/覆盖渲染体 + `APPEND_SYSTEM.md` | 现行（实现未拆六模块，整段计） |
 | 2 | 内置工具 schema | `tools.assemble` 内置面 | 现行 |
 | 3 | 自定义工具 schema | 插件 / MCP 工具（含 `mcp_` 前缀） | 现行 |
-| 4 | 技能索引 | `runtime.prompt.skill_context`（name + description），经 Agno `additional_context` 并入系统消息 | 现行 |
+| 4 | 技能索引 | Agno `Skills.get_system_prompt_snippet()`（`<skills_system>`），随系统消息发送 | 现行 |
 | 5a | 记忆注入 | 记忆工具清单与 `prompt_block` 已并入第 1 类（指针，不重复计数）；召回块运行期注入、不落史 | 现行 |
 | 5b | 压缩摘要 | 历史中 `from_history` 的摘要消息（Agno 压缩投影） | 视实际存在 |
 | 6 | 用户消息 | Agno 消息 `role=user` | 现行 |

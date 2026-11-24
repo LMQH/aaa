@@ -66,9 +66,16 @@ source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aaa", "src/miniviking"]
+# create-extension/references 是指向 docs/extending 的符号链接：wheel 直构时
+# hatchling 跟随链接收集实文件，wheel 侧不做显式映射（会与链接遍历双份写入
+# 同一路径导致构建失败）。sdist 不认 wheel 的链接遍历差异：排除链接路径，
+# 用 sdist 的 force-include 把同一批引用以实文件放进源码包，保证从 sdist
+# 构建 wheel 时引用仍在。
+[tool.hatch.build.targets.sdist]
+exclude = ["src/aaa/builtin_skills/create-extension/references"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"docs/extending" = "aaa/builtin_skills/create-extension/references"
+[tool.hatch.build.targets.sdist.force-include]
+"docs/extending" = "src/aaa/builtin_skills/create-extension/references"
 
 [tool.ruff]
 target-version = "py311"

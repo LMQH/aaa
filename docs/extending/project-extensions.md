@@ -7,7 +7,7 @@
 | 路径 | 内容 | 生效 | 信任 |
 |---|---|---|---|
 | `.aaa/commands/<name>.md` | 斜杠命令模板 | 下次启动 | 纯文本，自动加载 |
-| `.aaa/skills/<name>/SKILL.md` | 技能 | 下次启动 | 纯文本，自动加载 |
+| `.aaa/skills/<name>/SKILL.md` | 技能 | 下次启动 | 文本自动加载；`scripts/` 可被模型执行 |
 | `AGENTS.md`（仓库根） | 项目指令 | 下次启动 | 纯文本，自动加载 |
 | `.aaa/extensions/<name>/extension.toml` | MCP 扩展声明 | 下次启动 | 需仓库信任；每次工具调用仍审批 |
 | `.aaa/animations/<name>.py` | 启动动画 | 下次启动 | 需仓库信任（进程内代码） |
@@ -40,6 +40,6 @@ repo/
     skills/repo-brief/SKILL.md  # 项目技能
 ```
 
-随仓库提交即可；不需要信任确认（纯文本）。放代码类之前先想清楚：任何克隆该仓库的人都会在首次交互启动时被询问是否信任。
+随仓库提交即可；不需要信任确认（文本与技能正文不执行；技能 `scripts/` 的执行面见 `skills.md`）。放代码类之前先想清楚：任何克隆该仓库的人都会在首次交互启动时被询问是否信任。
 
 本仓库自身提交了 `.aaa/commands`（`/pr`、`/review`）与 `.aaa/skills/release`，可直接作为范例。

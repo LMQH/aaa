@@ -6,9 +6,9 @@
 - 插件：`~/.aaa/extensions/<name>/extension.toml`，`[mcp]` 段声明一个 MCP
   server（stdio 的 `command`，或远程的 `url` + `transport`）；目录里存在
   `.disabled` 标记文件时停用。
-- 技能：`skills_dirs` 下 `<name>/SKILL.md`（支持一层分类目录），YAML
-  frontmatter 的 `name`/`description` 用于展示；正文经 `load_skill` 工具
-  由模型按需读取。
+- 技能：装配 `agno.skills.Skills`（loader 顺序 = 优先级倒序，后者覆盖）。
+  发现、披露与读取（`get_skill_instructions`/`get_skill_reference`/
+  `get_skill_script`）全部由 Agno 原生承担，aaa 只提供目录与来源标签。
 
 MCP 桥接：agno 的 MCPTools 只支持异步上下文，而 aaa 的 agent 是同步运行。
 这里用一个常驻后台事件循环连接 server，把每个异步 Function 的入口换成
@@ -25,9 +25,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
-from agno.exceptions import PathSecurityError
+from agno.skills import Skills
+from agno.skills.loaders.local import LocalSkills
 from agno.tools.function import Function
-from agno.utils.path_safety import safe_join_relative_path
 
 
 class SettingsLike(Protocol):
@@ -42,14 +42,6 @@ class CustomCommand:
     name: str
     path: Path
     template: str
-    source: str = "user"
-
-
-@dataclass(frozen=True)
-class Skill:
-    name: str
-    path: Path
-    description: str
     source: str = "user"
 
 
@@ -131,36 +123,79 @@ def _frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
     return meta, body.strip()
 
 
-def discover_skills(dirs) -> List[Skill]:
-    """`<dir>/<name>/SKILL.md` 与 `<dir>/<分类>/<name>/SKILL.md` 两层都扫；先到先得。"""
-    out: List[Skill] = []
-    seen: set = set()
-    for d, source in _pairs(dirs):
-        if not d.is_dir():
+class GatedSkills(Skills):
+    """按权限模式裁剪的技能束：不允许脚本时移除执行工具与索引里的脚本宣传。
+
+    仅在装配点使用（runtime 按 mode 选择变体），不改 Agno 的执行路径。
+    """
+
+    def __init__(self, loaders, *, allow_scripts: bool):
+        super().__init__(loaders)
+        self._allow_scripts = allow_scripts
+
+    def get_tools(self) -> List[Function]:
+        tools = super().get_tools()
+        if self._allow_scripts:
+            return tools
+        return [tool for tool in tools if getattr(tool, "name", "") != "get_skill_script"]
+
+    def get_system_prompt_snippet(self) -> str:
+        snippet = super().get_system_prompt_snippet()
+        if self._allow_scripts:
+            return snippet
+        lines = []
+        for line in snippet.splitlines():
+            stripped = line.strip()
+            if "get_skill_script" in stripped:
+                continue
+            if stripped.startswith("<scripts>") and stripped != "<scripts>none</scripts>":
+                line = line.replace(stripped, "<scripts>none</scripts>")
+            lines.append(line)
+        return "\n".join(lines)
+
+
+def build_skills(skill_dirs) -> Tuple[Optional[Skills], Dict[str, str]]:
+    """装配 `agno.skills.Skills`；返回 (技能束, 技能名→来源)。
+
+    loader 顺序是优先级的倒序：Agno 同名技能「后者覆盖」，因此把目录按
+    [builtin, user…, project] 传入，等效 aaa 的先到先得（project > user > builtin）。
+    校验保持 aaa 的宽容语义：`validate=False`，非法技能跳过而不是中止装配。
+    发现只扫一层 `<dir>/<name>/SKILL.md`；来源标签按原顺序先到先得，
+    键为 Agno 生效的技能名（frontmatter `name`，缺省目录名）。
+    """
+    ordered = list(_pairs(skill_dirs))
+    loaders = [LocalSkills(str(d), validate=False) for d, _ in reversed(ordered) if _is_dir_quiet(d)]
+    sources: Dict[str, str] = {}
+    for d, source in ordered:
+        if not _is_dir_quiet(d):
             continue
-        for f in sorted(d.glob("*/SKILL.md")) + sorted(d.glob("*/*/SKILL.md")):
-            name = f.parent.name
-            if name in seen or (name == "references" and f.parent.is_symlink()):
+        try:
+            children = sorted(d.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir() or not (child / "SKILL.md").is_file():
                 continue
+            # Agno 的技能名取 frontmatter 的 name，缺省目录名；来源标签按同名键记录。
+            name = child.name
             try:
-                body_path = safe_join_relative_path(f.parent, f.name)
-                if not body_path.is_file():
-                    continue
-                meta, _ = _frontmatter(body_path.read_text(encoding="utf-8"))
-            except (PathSecurityError, OSError, RuntimeError, UnicodeError):
-                continue
-            seen.add(name)
-            out.append(Skill(name, f, str(meta.get("description", "")), source))
-    return out
+                meta, _ = _frontmatter((child / "SKILL.md").read_text(encoding="utf-8", errors="replace"))
+                front = str(meta.get("name") or "").strip()
+                if front:
+                    name = front
+            except (OSError, UnicodeError):
+                pass
+            sources.setdefault(name, source)
+    if not loaders:
+        return None, {}
+    return Skills(loaders), sources
 
 
-def skill_body(path: Path) -> str:
-    """SKILL.md 去掉 frontmatter 的正文；模型看到的就是它。"""
-    source = safe_join_relative_path(path.parent, path.name)
-    if not source.is_file():
-        raise FileNotFoundError(path)
-    _, body = _frontmatter(source.read_text(encoding="utf-8", errors="replace"))
-    return body
+def _is_dir_quiet(d) -> bool:
+    try:
+        return Path(d).is_dir()
+    except OSError:
+        return False
 
 
 def discover_mcp(dirs) -> List[McpExtension]:
@@ -263,46 +298,6 @@ def open_mcp_tools(exts: List[McpExtension], timeout: float) -> Tuple[List[Funct
     return functions, failed
 
 
-def make_skill_tool(skills: List[Skill]):
-    """`load_skill` 只读已发现技能的正文或 Markdown 引用。"""
-    index = {s.name: s for s in skills}
-
-    def load_skill(name: str, reference: Optional[str] = None) -> str:
-        """读取已发现技能的正文，或按技能指引读取一份 Markdown 引用。
-
-        Args:
-            name: 系统提示词技能目录中的技能名。
-            reference: 可选的引用文件名（含 .md，不传则读技能正文）。
-        """
-        skill = index.get(name)
-        if skill is None:
-            known = "、".join(sorted(index)) or "（无）"
-            return f"未知技能：{name}。可用：{known}"
-        if reference is not None:
-            if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*\.md", reference):
-                return "引用必须是单个 Markdown 文件名。"
-            try:
-                if (skill.path.parent / "references").is_symlink():
-                    return f"无法读取技能 {name} 的引用：{reference}"
-                root = safe_join_relative_path(skill.path.parent, "references")
-                # 源码运行与 wheel 安装共享 docs/extending/ 的内容；用户同名技能不继承内置资料。
-                if (skill.path == BUILTIN_SKILLS_DIR / "create-extension" / "SKILL.md"
-                        and not root.exists() and BUILTIN_SKILLS_DIR.parent.parent.name == "src"):
-                    root = BUILTIN_SKILLS_DIR.parents[2] / "docs" / "extending"
-                target = safe_join_relative_path(root, reference)
-                if not target.is_file():
-                    return f"技能 {name} 没有引用：{reference}"
-                return target.read_text(encoding="utf-8")
-            except (PathSecurityError, OSError, RuntimeError, UnicodeError):
-                return f"无法读取技能 {name} 的引用：{reference}"
-        try:
-            return skill_body(skill.path)
-        except (PathSecurityError, OSError, RuntimeError):
-            return f"无法读取技能 {name} 的正文。"
-
-    return load_skill
-
-
 COMMANDS_DIR_DEFAULT = Path.home() / ".aaa" / "commands"
 EXTENSIONS_DIR_DEFAULT = Path.home() / ".aaa" / "extensions"
 SKILLS_ROOT_DEFAULT = Path.home() / ".agents" / "skills"
@@ -377,7 +372,7 @@ def make_create_tools():
             target.write_text(content, encoding="utf-8")
         except OSError as exc:
             return f"创建失败：{exc}"
-        return f"已创建 skill:{name} → {target}。重启生效；/skills 可见，模型可用 load_skill 读取。"
+        return f"已创建 skill:{name} → {target}。重启生效；/skills 可见，模型可用 get_skill_instructions 读取。"
 
     create_plugin_fn = Function(
         name="create_plugin",
