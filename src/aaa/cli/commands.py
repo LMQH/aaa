@@ -16,7 +16,7 @@ from .. import insight as insight_mod
 from .. import trust as trust_mod
 from ..boundary.policy import MODES
 from ..config.loader import CONFIG_VERSION, SECRET_FILE, probe_models, save_config
-from ..config.paths import DB_FILE
+from ..config.paths import ANIMATIONS_DIR, DB_FILE
 from ..config.settings import APPLY_RESTART, APPLY_RUNTIME, BY_PATH
 from ..config.settings import save as save_settings
 from ..memory import engine_ids
@@ -29,6 +29,7 @@ from ..sessions.query import find_session, list_sessions, session_label
 from ..todo_contract import normalize
 from ..usage import ledger as usage_ledger
 from ..usage import report as usage_report
+from . import animations, picker
 from .render import sanitize
 from .state import AppState
 from .ui import GLYPH, UI_STYLE, display_width, pad, print_help
@@ -61,6 +62,26 @@ def _ask_menu(question):
         return app.run(in_thread=True)
     except (KeyboardInterrupt, EOFError):
         return None
+
+
+def _theme(state: AppState) -> str:
+    settings = getattr(state, "settings", None)
+    return str(settings.get("ui.theme")) if settings is not None else "default"
+
+
+def _menu(state: AppState, title: str, choices, *, default=None, subtitle: str = ""):
+    """统一选择器：`❯` 前缀、强调色、输入即筛选、Esc 返回。"""
+    return picker.choose(
+        title, choices, default=default, subtitle=subtitle, theme=_theme(state)
+    )
+
+
+def _ask_value(state: AppState, title: str, *, default: str = "", hint: str = "Enter 确认 · Esc 返回"):
+    return picker.ask_text(title, default=default, hint=hint, theme=_theme(state))
+
+
+def _confirm(state: AppState, title: str, *, default: bool = False):
+    return picker.confirm(title, default=default, theme=_theme(state))
 
 
 def configure(existing: Optional[Dict], settings) -> Optional[Dict]:
@@ -233,6 +254,94 @@ def _default_choice(providers: Dict[str, Dict], current) -> Optional[Dict]:
     return {"provider": provider, "model": model_id}
 
 
+def _session_menu(state: AppState) -> None:
+    """会话操作入口：Esc 逐级返回，Ctrl-C 放弃整个命令。"""
+    actions = [
+        picker.Item("switch", "切换会话…"),
+        picker.Item("search", "搜索会话…"),
+        picker.Item("rename", "重命名当前会话…"),
+        picker.Item("delete", "删除会话…"),
+    ]
+    while True:
+        action = _menu(state, "会话操作", actions, subtitle="Esc 返回输入")
+        if action in (picker.BACK, picker.ABORT):
+            return
+        if action == "switch":
+            sessions = list_sessions(state.runnable, limit=int(state.settings.get("sessions.list_limit")))
+            if not sessions:
+                print("暂无会话。")
+                return
+            picked = _menu(
+                state, "选择会话",
+                [picker.Item(s, session_label(s)) for s in sessions],
+                subtitle="Esc 返回会话操作",
+            )
+            if picked is picker.BACK:
+                continue
+            if picked is picker.ABORT:
+                return
+            _open_session(state, picked)
+            return
+        if action == "search":
+            keyword = _ask_value(state, "搜索关键字", hint="Enter 搜索 · Esc 返回会话操作")
+            if keyword is picker.BACK:
+                continue
+            if keyword is picker.ABORT or not keyword.strip():
+                return
+            matches = [
+                s for s in list_sessions(
+                    state.runnable, limit=int(state.settings.get("sessions.search_limit"))
+                )
+                if keyword.strip().lower() in (s.session_data or {}).get("session_name", "").lower()
+                or keyword.strip().lower() in s.session_id.lower()
+            ]
+            if not matches:
+                print("没有匹配的会话。")
+                continue
+            picked = _menu(
+                state, "选择会话",
+                [picker.Item(s, session_label(s)) for s in matches],
+                subtitle="Esc 返回会话操作",
+            )
+            if picked is picker.BACK:
+                continue
+            if picked is picker.ABORT:
+                return
+            _open_session(state, picked)
+            return
+        if action == "rename":
+            title = _ask_value(state, "新标题", hint="Enter 确认 · Esc 返回会话操作")
+            if title is picker.BACK:
+                continue
+            if title is picker.ABORT or not title.strip():
+                return
+            state.runnable.db.rename_session(state.session_id, SessionType.AGENT, title.strip())
+            print(f"{GLYPH['ok']} 已改名：{title.strip()}")
+            return
+        if action == "delete":
+            sessions = list_sessions(state.runnable, limit=int(state.settings.get("sessions.list_limit")))
+            targets = [s for s in sessions if s.session_id != state.session_id]
+            if not targets:
+                print("没有可删除的会话（当前会话不能删除；先 /session 切走或 /new）。")
+                return
+            picked = _menu(
+                state, "选择要删除的会话",
+                [picker.Item(s, session_label(s)) for s in targets],
+                subtitle="Esc 返回会话操作",
+            )
+            if picked is picker.BACK:
+                continue
+            if picked is picker.ABORT:
+                return
+            answer = _confirm(state, f"删除会话 {session_label(picked)}？此操作不可恢复。")
+            if answer is not True:
+                continue
+            state.runnable.db.delete_session(session_id=picked.session_id)
+            index.forget(DB_FILE, str(Path.cwd()), picked.session_id)
+            print(f"{GLYPH['ok']} 已删除 {picked.session_id}")
+            return
+
+
 def handle_command(state: AppState, text: str) -> bool:
     """处理斜杠命令；返回 True 表示已处理，False 表示这行交给模型。"""
     if text == "/insight":
@@ -246,55 +355,8 @@ def handle_command(state: AppState, text: str) -> bool:
         return True
 
     if text == "/session":
-        action = _ask_menu(questionary.select(
-            "会话操作",
-            choices=[
-                questionary.Choice("切换会话…", value="switch"),
-                questionary.Choice("搜索会话…", value="search"),
-                questionary.Choice("重命名当前会话…", value="rename"),
-                questionary.Choice("删除会话…", value="delete"),
-            ],
-            style=UI_STYLE,
-        ))
-        if not action:
-            return True
-        if action == "switch":
-            sessions = list_sessions(state.runnable, limit=int(state.settings.get("sessions.list_limit")))
-            if not sessions:
-                print("暂无会话。")
-                return True
-            picked = _ask_menu(questionary.select(
-                "选择会话",
-                choices=[questionary.Choice(session_label(s), value=s) for s in sessions],
-                style=UI_STYLE,
-            ))
-            if picked:
-                _open_session(state, picked)
-            return True
-        if action == "search":
-            keyword = _ask_menu(questionary.text("搜索关键字（留空取消）", style=UI_STYLE))
-            if keyword is None or not keyword.strip():
-                return True
-            return handle_command(state, f"/session search {keyword.strip()}")
-        if action == "rename":
-            title = _ask_menu(questionary.text("新标题（留空取消）", style=UI_STYLE))
-            if title is None or not title.strip():
-                return True
-            return handle_command(state, f"/session rename {title.strip()}")
-        if action == "delete":
-            sessions = list_sessions(state.runnable, limit=int(state.settings.get("sessions.list_limit")))
-            targets = [s for s in sessions if s.session_id != state.session_id]
-            if not targets:
-                print("没有可删除的会话（当前会话不能删除；先 /session 切走或 /new）。")
-                return True
-            picked = _ask_menu(questionary.select(
-                "选择要删除的会话",
-                choices=[questionary.Choice(session_label(s), value=s) for s in targets],
-                style=UI_STYLE,
-            ))
-            if picked:
-                return handle_command(state, f"/session delete {picked.session_id}")
-            return True
+        _session_menu(state)
+        return True
 
     if text.startswith("/session "):
         argument = text[len("/session "):].strip()
@@ -318,9 +380,7 @@ def handle_command(state: AppState, text: str) -> bool:
             if target.session_id == state.session_id:
                 print("当前会话不能删除；先 /session 切走或 /new。")
                 return True
-            if not _ask_menu(questionary.confirm(
-                f"删除会话 {session_label(target)}？此操作不可恢复。", default=False, style=UI_STYLE
-            )):
+            if _confirm(state, f"删除会话 {session_label(target)}？此操作不可恢复。") is not True:
                 return True
             state.runnable.db.delete_session(session_id=target.session_id)
             index.forget(DB_FILE, str(Path.cwd()), target.session_id)
@@ -340,12 +400,12 @@ def handle_command(state: AppState, text: str) -> bool:
             if not matches:
                 print("没有匹配的会话。")
                 return True
-            picked = _ask_menu(questionary.select(
-                "选择会话",
-                choices=[questionary.Choice(session_label(s), value=s) for s in matches],
-                style=UI_STYLE,
-            ))
-            if picked:
+            picked = _menu(
+                state, "选择会话",
+                [picker.Item(s, session_label(s)) for s in matches],
+                subtitle="Esc 取消",
+            )
+            if picked not in (picker.BACK, picker.ABORT):
                 _open_session(state, picked)
             return True
 
@@ -409,10 +469,12 @@ def handle_command(state: AppState, text: str) -> bool:
     if text == "/mode" or text.startswith("/mode "):
         argument = text[len("/mode"):].strip()
         if not argument:
-            argument = _ask_menu(questionary.select(
-                "权限模式", choices=MODES, default=state.mode, style=UI_STYLE
-            ))
-            if not argument:
+            argument = _menu(
+                state, "权限模式",
+                [picker.Item(mode, mode) for mode in MODES],
+                default=state.mode,
+            )
+            if argument in (picker.BACK, picker.ABORT):
                 return True
         if argument not in MODES:
             print(f"未知模式：{argument}")
@@ -443,13 +505,12 @@ def handle_command(state: AppState, text: str) -> bool:
 
         if not argument:
             current = state.model_ref.display
-            picked = _ask_menu(questionary.select(
-                "选择模型",
-                choices=[ref.display for ref in scope],
+            picked = _menu(
+                state, "选择模型",
+                [picker.Item(ref.display, ref.display) for ref in scope],
                 default=current if state.model_ref in scope else None,
-                style=UI_STYLE,
-            ))
-            if not picked:
+            )
+            if picked in (picker.BACK, picker.ABORT):
                 return True
             argument = picked
 
@@ -507,6 +568,11 @@ def _set_setting(state: AppState, path: str, raw: str) -> None:
     if path == "memory.source":
         print("记忆引擎请通过 /memory（或 /memory engine <引擎>）修改。")
         return
+    if path == "ui.banner_animation":
+        available = set(animations.discover(_animation_dirs(state)))
+        if raw not in available:
+            print(f"{GLYPH['fail']} 未知动画：{raw}（可用：{'、'.join(sorted(available))}）")
+            return
     try:
         state.settings.set(path, raw)
     except ValueError as exc:
@@ -515,29 +581,105 @@ def _set_setting(state: AppState, path: str, raw: str) -> None:
     _apply_setting(state, path)
 
 
-def _config_menu(state: AppState) -> None:
-    group = _ask_menu(questionary.select(
-        "配置分组", choices=state.settings.groups(), style=UI_STYLE
-    ))
-    if not group:
-        return
-    keys = state.settings.keys_of(group)
-    choices = [
-        questionary.Choice(
-            f"{key.short} = {_format_value(state.settings.get(key.path))}", value=key.path
-        )
-        for key in keys
+def _animation_dirs(state: Optional[AppState] = None) -> tuple:
+    """与启动解析同一组目录：受信任项目的动画、用户目录，包内由 discover 兜底。"""
+    settings = getattr(state, "settings", None)
+    dirs = []
+    if settings is not None:
+        project_dir = trust_mod.trusted_project_dir(settings, "animations")
+        if project_dir is not None:
+            dirs.append(project_dir)
+    dirs.append(ANIMATIONS_DIR)
+    return tuple(dirs)
+
+
+def _animation_items(state: Optional[AppState] = None) -> List[picker.Item]:
+    names = sorted(animations.discover(_animation_dirs(state)))
+    return [
+        picker.Item(name, name, "默认" if name == animations.DEFAULT else "启动动画")
+        for name in names
     ]
-    path = _ask_menu(questionary.select("修改哪一项", choices=choices, style=UI_STYLE))
-    if not path:
-        return
+
+
+def _choose_animation(state: AppState, *, subtitle: str = "Esc 返回"):
+    return _menu(
+        state,
+        "启动动画（下次启动生效）",
+        _animation_items(state),
+        default=str(state.settings.get("ui.banner_animation")),
+        subtitle=subtitle,
+    )
+
+
+def _edit_setting(state: AppState, path: str, *, subtitle: str) -> Optional[object]:
+    """编辑一项设置；返回 BACK/ABORT 供上层回退，正常保存后返回 None。"""
+    key = BY_PATH[path]
     _show_setting(state, path)
-    raw = _ask_menu(questionary.text(
-        "新值（留空取消）", default=_format_value(state.settings.get(path)), style=UI_STYLE
-    ))
-    if raw is None or not raw.strip():
-        return
-    _set_setting(state, path, raw.strip())
+    if path == "ui.banner_animation":
+        picked = _choose_animation(state, subtitle=subtitle)
+        if picked in (picker.BACK, picker.ABORT):
+            return picked
+        _set_setting(state, path, picked)
+        return None
+    current = _format_value(state.settings.get(path))
+    choices = list(key.choices()) if key.choices is not None else (
+        ["true", "false"] if key.kind == "bool" else []
+    )
+    if choices:
+        picked = _menu(
+            state,
+            f"{key.path} · {key.label}",
+            [picker.Item(value, value) for value in choices],
+            default=current,
+            subtitle=subtitle,
+        )
+        if picked in (picker.BACK, picker.ABORT):
+            return picked
+        raw = picked
+    else:
+        raw = _ask_value(
+            state,
+            f"{key.path} · {key.label}",
+            default=current,
+            hint=f"{state.settings.describe(path)} · Enter 保存 · Esc 返回",
+        )
+        if raw in (picker.BACK, picker.ABORT):
+            return raw
+        if not str(raw).strip():
+            return None
+    _set_setting(state, path, str(raw).strip())
+    return None
+
+
+def _config_menu(state: AppState) -> None:
+    """配置入口：分组 → 键 → 值；Esc 逐级回退，Ctrl-C 放弃整个命令。"""
+    while True:
+        group = _menu(
+            state,
+            "配置分组",
+            [picker.Item(group, group) for group in state.settings.groups()],
+            subtitle="Esc 返回输入",
+        )
+        if group in (picker.BACK, picker.ABORT):
+            return
+        while True:
+            keys = state.settings.keys_of(group)
+            items = [
+                picker.Item(
+                    key.path,
+                    f"{key.short} = {_format_value(state.settings.get(key.path))}",
+                    key.label,
+                )
+                for key in keys
+            ]
+            path = _menu(state, f"配置 · {group}", items, subtitle="Esc 返回分组")
+            if path is picker.BACK:
+                break
+            if path is picker.ABORT:
+                return
+            result = _edit_setting(state, path, subtitle="Esc 返回列表")
+            if result is picker.ABORT:
+                return
 
 
 def _config_command(state: AppState, argument: str) -> None:
@@ -545,8 +687,15 @@ def _config_command(state: AppState, argument: str) -> None:
         _config_menu(state)
         return
     parts = argument.split(None, 1)
-    path = "ui.banner_animation" if parts[0] == "start" else parts[0]
+    start = parts[0] == "start"
+    path = "ui.banner_animation" if start else parts[0]
     if len(parts) == 1:
+        if start:
+            picked = _choose_animation(state, subtitle="Esc 取消")
+            if picked in (picker.BACK, picker.ABORT):
+                return
+            _set_setting(state, path, picked)
+            return
         _show_setting(state, path)
         return
     _set_setting(state, path, parts[1].strip())
@@ -727,17 +876,22 @@ def _memory_command(state: AppState, argument: str) -> None:
 
 
 def _memory_action_menu(state: AppState) -> None:
-    """空闲引导菜单：切换引擎；外置引擎附带配置入口。Esc 取消，静默返回。"""
-    choices = [questionary.Choice("切换记忆引擎…", value="engine")]
-    if state.memory is not None and state.memory != "builtin" and state.memory.config_specs():
-        choices.append(questionary.Choice("引擎配置…", value="config"))
-    action = _ask_menu(questionary.select("记忆操作", choices=choices, style=UI_STYLE))
-    if not action:
-        return
-    if action == "engine":
-        _memory_engine(state, "")
-    elif action == "config":
-        _memory_config(state, "")
+    """空闲引导菜单：切换引擎；外置引擎附带配置入口。Esc 逐级返回，静默退出。"""
+    while True:
+        choices = [picker.Item("engine", "切换记忆引擎…")]
+        if state.memory is not None and state.memory != "builtin" and state.memory.config_specs():
+            choices.append(picker.Item("config", "引擎配置…"))
+        action = _menu(state, "记忆操作", choices, subtitle="Esc 返回输入")
+        if action in (picker.BACK, picker.ABORT):
+            return
+        if action == "engine":
+            if _memory_engine(state, ""):
+                return
+            continue
+        if action == "config":
+            if _memory_config(state, ""):
+                return
+            continue
 
 
 def _memory_status(state: AppState) -> None:
@@ -754,24 +908,27 @@ def _memory_status(state: AppState) -> None:
         print(f"共 {total} 条")
 
 
-def _ask_engine_choice(choices: dict[str, str]):
-    return _ask_menu(questionary.select(
+def _ask_engine_choice(state: AppState, choices: dict[str, str]):
+    picked = _menu(
+        state,
         "选择记忆引擎（重启后生效）",
-        choices=[questionary.Choice(label, value=value) for value, label in choices.items()],
-        style=UI_STYLE,
-    ))
+        [picker.Item(value, label) for value, label in choices.items()],
+        default=str(state.settings.get("memory.source")),
+        subtitle="Esc 返回",
+    )
+    return None if picked in (picker.BACK, picker.ABORT) else picked
 
 
-def _memory_engine(state: AppState, source: str) -> None:
+def _memory_engine(state: AppState, source: str) -> bool:
     choices = memory_choices(trust_mod.trusted_project_dir(state.settings, "memory_engines"))
     if not source:
-        source = _ask_engine_choice(choices)
+        source = _ask_engine_choice(state, choices)
         if source is None:
             print(f"{GLYPH['dot']} 已取消。")
-            return
+            return False
     if source not in choices:
         print(f"未知记忆引擎：{sanitize(source)}。用 /memory engine 选择。")
-        return
+        return False
     previous = state.settings.get("memory.source")
     state.settings.set("memory.source", source)
     try:
@@ -779,17 +936,19 @@ def _memory_engine(state: AppState, source: str) -> None:
     except Exception as exc:
         state.settings.set("memory.source", previous)
         print(f"{GLYPH['fail']} 保存失败：{sanitize(str(exc))}")
-        return
+        return False
     print(f"{GLYPH['ok']} 已保存：{choices[source]}。重启后生效。")
     if source.startswith("external:miniviking") and not _embedding_installed():
-        answer = _ask_menu(questionary.confirm(
+        answer = _confirm(
+            state,
             "开启完整能力（安装语义检索增强，约 50MB，需要网络，后台执行）？",
-            default=True, style=UI_STYLE,
-        ))
-        if answer:
+            default=True,
+        )
+        if answer is True:
             _memory_embedding(state, "install")
         else:
             print("已跳过；之后可用 /memory embedding install 开启。")
+    return True
 
 
 def _config_mask(spec: dict) -> str:
@@ -851,63 +1010,100 @@ def _convert_config_value(spec: dict, raw: str):
     return value
 
 
-def _apply_config_value(state: AppState, spec: dict, raw: str) -> None:
+def _apply_config_value(state: AppState, spec: dict, raw: str) -> bool:
     try:
         value = _convert_config_value(spec, raw)
     except (ValueError, TypeError) as exc:
         print(f"{GLYPH['fail']} {sanitize(str(exc))}")
-        return
+        return False
     result = state.memory.apply_config({spec["key"]: value})
     if result:
         print(f"{GLYPH['fail']} {sanitize(result)}")
-        return
+        return False
     shown = "******" if spec.get("secret") and value else sanitize(str(value))
     print(f"{GLYPH['ok']} 已保存：{spec['key']} = {shown}。重启 aaa 后生效。")
+    return True
 
 
-def _memory_config(state: AppState, rest: str) -> None:
+def _memory_config(state: AppState, rest: str) -> bool:
     """当前记忆引擎的配置面：无参进两级菜单，`config <键> <值>` 直达修改。"""
     if state.memory is None:
         print("记忆已关闭；先切换到一个记忆引擎。")
-        return
+        return False
     if state.memory == "builtin":
         print("内置记忆没有引擎级配置。")
-        return
+        return False
     specs = state.memory.config_specs()
     if not specs:
         print("当前记忆引擎未提供配置面。")
-        return
+        return False
     by_key = {spec["key"]: spec for spec in specs}
     if rest:
         parts = rest.split(None, 1)
         spec = by_key.get(parts[0])
         if spec is None:
             print(f"未知配置键：{sanitize(parts[0])}。用 /memory config 查看。")
-            return
+            return False
         if len(parts) < 2 or not parts[1].strip():
             _show_config_spec(spec)
-            return
+            return True
         _apply_config_value(state, spec, parts[1].strip())
-        return
+        return True
     sections = sorted({spec.get("section") or spec["key"].split(".", 1)[0] for spec in specs})
-    section = _ask_menu(questionary.select("配置分组", choices=sections, style=UI_STYLE))
-    if not section:
-        return
-    group = [spec for spec in specs if (spec.get("section") or spec["key"].split(".", 1)[0]) == section]
-    key = _ask_menu(questionary.select(
-        "修改哪一项",
-        choices=[questionary.Choice(_config_label(spec), value=spec["key"]) for spec in group],
-        style=UI_STYLE,
-    ))
-    if not key:
-        return
-    spec = by_key[key]
-    _show_config_spec(spec)
-    default = "" if (spec.get("secret") and spec.get("current")) else _format_value(spec.get("current"))
-    raw = _ask_menu(questionary.text("新值（留空取消）", default=default, style=UI_STYLE))
-    if raw is None or not raw.strip():
-        return
-    _apply_config_value(state, spec, raw.strip())
+    while True:
+        section = _menu(
+            state, "配置分组",
+            [picker.Item(value, value) for value in sections],
+            subtitle="Esc 返回输入",
+        )
+        if section in (picker.BACK, picker.ABORT):
+            return False
+        group = [
+            spec for spec in specs
+            if (spec.get("section") or spec["key"].split(".", 1)[0]) == section
+        ]
+        while True:
+            key = _menu(
+                state, "修改哪一项",
+                [picker.Item(spec["key"], _config_label(spec)) for spec in group],
+                subtitle="Esc 返回分组",
+            )
+            if key is picker.BACK:
+                break
+            if key is picker.ABORT:
+                return False
+            spec = by_key[key]
+            _show_config_spec(spec)
+            default = "" if (spec.get("secret") and spec.get("current")) else _format_value(spec.get("current"))
+            if spec.get("choices"):
+                picked = _menu(
+                    state,
+                    f"{spec['key']} · {spec.get('description', '')}",
+                    [picker.Item(str(choice), str(choice)) for choice in spec["choices"]],
+                    default=default,
+                    subtitle="Esc 返回列表",
+                )
+                if picked is picker.BACK:
+                    continue
+                if picked is picker.ABORT:
+                    return False
+                raw = picked
+            else:
+                raw = _ask_value(
+                    state,
+                    f"{spec['key']} · {spec.get('description', '')}",
+                    default=default,
+                    hint=f"{spec.get('type', 'str')} · Enter 保存 · Esc 返回列表",
+                )
+                if raw is picker.BACK:
+                    continue
+                if raw is picker.ABORT:
+                    return False
+                if not str(raw).strip():
+                    continue
+            if not _apply_config_value(state, spec, str(raw).strip()):
+                continue
+            return True
 
 
 def show_memory_status(state: AppState) -> None:
@@ -1005,13 +1201,14 @@ def _export_command(state: AppState, argument: str) -> None:
     """把当前会话导出为 markdown transcript；默认写到 cwd 的 session-<id>.md。"""
     if not argument:
         default = str(Path.cwd() / f"session-{state.session_id}.md")
-        raw = _ask_menu(questionary.text(
-            "导出路径（回车确认，留空或 Esc 取消）", default=default, style=UI_STYLE,
-        ))
-        if raw is None or not raw.strip():
+        raw = _ask_value(
+            state, "导出路径", default=default,
+            hint="Enter 确认 · 留空或 Esc 取消",
+        )
+        if raw in (picker.BACK, picker.ABORT) or not str(raw).strip():
             print(f"{GLYPH['dot']} 已取消。")
             return
-        argument = raw.strip()
+        argument = str(raw).strip()
     target = Path(argument).expanduser() if argument else Path.cwd() / f"session-{state.session_id}.md"
     runs = state.runnable.db.get_runs(
         session_id=state.session_id, sort_by="created_at", sort_order="asc",
@@ -1058,16 +1255,20 @@ def _plugin_command(state: AppState, argument: str) -> None:
     if not exts:
         print("没有发现插件。把插件放到 ~/.aaa/extensions/<name>/extension.toml（[mcp] 段）。")
         return
-    picked = _ask_menu(questionary.select(
+    picked = _menu(
+        state,
         "选择插件（回车切换启停，重启生效）",
-        choices=[
-            questionary.Choice(
-                f"{'●' if e.enabled else '○'} {e.name} {_source_tag(e)}  ·  mcp", value=e
-            ) for e in exts
+        [
+            picker.Item(
+                e,
+                f"{'●' if e.enabled else '○'} {e.name} {_source_tag(e)}",
+                "mcp",
+            )
+            for e in exts
         ],
-        style=UI_STYLE,
-    ))
-    if picked:
+        subtitle="Esc 取消",
+    )
+    if picked not in (picker.BACK, picker.ABORT):
         enabled = toggle_extension(picked.path)
         print(f"{GLYPH['ok']} 插件 {picked.name} 已{'启用' if enabled else '停用'}（重启生效）")
 

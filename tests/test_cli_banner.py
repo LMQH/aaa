@@ -71,13 +71,32 @@ class BannerTest(unittest.TestCase):
             changed = {index // 8 for index, (before, after) in enumerate(zip(colors, moving)) if before != after}
             self.assertEqual(changed, {letter})
 
-    def test_banner_duration_defaults_to_one_second_within_bounds(self) -> None:
+    def test_banner_duration_defaults_to_three_seconds_within_bounds(self) -> None:
         from aaa.config.settings import BY_PATH, Settings
 
         key = BY_PATH["ui.banner_duration"]
-        self.assertEqual(key.default, 1.0)
+        self.assertEqual(key.default, 3.0)
         self.assertEqual((key.minimum, key.maximum), (0.3, 20.0))
-        self.assertEqual(Settings().get("ui.banner_duration"), 1.0)
+        self.assertEqual(Settings().get("ui.banner_duration"), 3.0)
+
+    def test_default_animation_is_the_omp_style_gradient_lockup(self) -> None:
+        ctx = animations.FrameContext(columns=100, rows=30, duration=3.0, version="1.2.3")
+        animation = animations.load(animations.DEFAULT)
+        frames = list(animations.frames_of(animation, ctx))
+        self.assertEqual(len(frames), 90)
+        self.assertAlmostEqual(sum(frame.delay for frame in frames), 3.0, places=3)
+        static = animations.paint(animations.static_of(animation, ctx), 100)
+        first = animations.paint(frames[0].content, 100)
+        last = animations.paint(frames[-1].content, 100)
+        self.assertNotEqual(first, static)
+        self.assertEqual(last, static)
+        plain = ANSI.sub("", static).splitlines()
+        self.assertEqual(plain[2].strip(), "..████..█████...   ▄▀▀▄ ▄▀▀▄ ▄▀▀▄")
+        self.assertIn("v1.2.3", plain[6])
+        self.assertIn("Amaterasu Agno Agent", plain[7])
+        self.assertTrue(all(get_cwidth(re.sub(r"\x1b\[[0-9;]*m", "", line)) <= 100 for line in first.splitlines()))
+        self.assertEqual(animations.limits(animation), (40, 12))
+        self.assertTrue(banner._fits(animation, 40, 12))
 
     def test_narrow_or_short_terminal_degrades_to_the_plain_title(self) -> None:
         animation = sharingan.ANIMATION

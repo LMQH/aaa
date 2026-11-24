@@ -27,7 +27,8 @@
 - `todo_contract` — TODO 条目契约，tools 与 CLI 共用。
 - `plugins` — 命令模板、技能、MCP 插件的发现与启停。
 - `cli/{args,app,state,run,ui,completer,commands,controller,render,diff,git_status,banner,key_input,tool_details}` — 入口、调度、渲染、输入适配、工具详情、事件与斜杠命令。
-- `cli/animations` — 启动动画插件：协议、发现与加载；默认 `default`，可选 `sharingan`。
+- `cli/picker` — 自建选择器与单行输入：`❯` 强调色选中、无底色、输入筛选、Esc 逐级返回。
+- `cli/animations` — 启动动画插件：协议、发现与加载；默认 `default`，可选 `sharingan`。默认动画为 α 图形 + 半块 `AAA`，渐变旋转 + 高光扫过。
 
 依赖单向：`cli → runtime/model/boundary/config/context/sessions/usage/memory`；`runtime → model/boundary/config/context/tools/memory`；`sessions → model/config`；`usage → config/model`；`config → model/boundary`；`memory → config.paths`；下层不 import CLI。`miniviking` 只 import `aaa.memory` 的公开协议，`aaa` 核心不 import `miniviking`。`boundary` 与 `tools` 互不 import，由 `runtime.tools_for_mode` 合并。
 
@@ -54,7 +55,7 @@
 - **隔离强度**：文件工具受工作区根约束、grep 受根目录约束；shell 只有 cwd 与审批，无路径约束。
 - **Team 任务依赖（上游）**：Agno 3.1.12 的 `execute_task` 完成后不自动刷新已阻塞的依赖。委派支持 `tasks`；领队在确认前置任务成功后，用 Agno 原生 `update_task_status` 刷新依赖。
 - **真实渠道覆盖**：基础闭环、真实工具、压缩、归档检索、内置记忆写入→新会话注入已通过最近一次真实渠道验收（2026-11-23）；miniviking BGE 语义检索真实端到端已通过；外部引擎经真实渠道的召回注入与 `cached_tokens` 上报仍未整体实测。
-- **物理终端**：iTerm/Terminal 的物理 Shift+Enter 与修饰键编码未逐一实测；单会话全路径贯通未整体重跑。
+- **物理终端**：`ESC[>4;2m` 的发出与还原、iTerm2 发出的 `ESC[27;2;13~` 与换行效果已在 PTY 实测；owner 已在本机 iTerm2 3.7.7 用物理 Shift+Enter 确认可用。macOS Terminal 不支持该协议，仍需终端侧映射。
 - **发布**：发版门已就绪（`scripts/release.py` 人建 tag、手动 dispatch、`environment: release` 审批、草稿 Release）；尚未发版。PyPI/testPyPI 尚未实现。
 - **平台**：Windows 的 PowerShell 与后台任务分支未实跑。
 - **首次发版**：尚未创建 tag/Release；`release.py tag` 的完整成功路径未跑（会创建真实 tag），早期检查与 pre-push 兜底已验证。
@@ -90,3 +91,22 @@
 ### 真实渠道（2026-11-23，最近一次；2026-11-24 未重跑）
 
 - P0 11/11，P1 2/2，内置记忆写入→新会话注入通过（`tokenhub/deepseek-flash`，临时 HOME，保留 HTTPS 代理）。未测外部引擎真实召回与 `cached_tokens`。
+
+### CLI 交互对齐（2026-11-24）
+
+- 环境：macOS arm64，`.venv` Python 3.13，HEAD `ecff336` + 本轮工作区改动；PTY 120×40 / 100×30，`TERM=xterm-256color`、`COLORTERM=truecolor`，测试进程显式移除本机 `NO_COLOR=1`。
+- 命令与步骤：`./tests/run.sh`；PTY 中依次执行 `/config start`、`/config` → `ui` → `banner_animation`、`/confi` + ↑ + Enter、`abc` + `ESC CR` + `def` + Ctrl-C、`/mode workspace-write` + 请求 `echo approval-ok`。
+- 预期依据：`src/aaa/cli/DESIGN.md` 二、三节与本轮交互契约。
+- 结果：单测 307 项 OK；默认横幅输出 α/`▄▀▀▄` 真彩渐变；`/config start` 弹出 `❯ default / sharingan` 且无 `48;` / `40m` 背景 SGR；Esc 从动画选择、配置键、配置组逐级返回；↑ 在补全菜单内移动并执行 `/config`；`ESC CR` 插入换行且未提交；审批无需 F2，等待 500ms 后 Enter 放行并得到 `approval-ok`；选择 sharingan 后 `config.toml` 写入 `banner_animation = "sharingan"`。
+- 证据位置：本轮 PTY 转录（`run_shell_command 0.0s · approval-ok`、`已清空草稿；按 Up 取回`）与 `tests/run.sh` 输出；未覆盖物理终端 Shift+Enter 编码与 Windows。
+- 独立 QA（`QaFinal`，2m11s，仅读）：307 项 OK；横幅、`↑` 补全、`/config start` 无底色、嵌套 Esc、`ESC CR` 换行 A–E 全部 PASS。审批项未独立复现（按约定跳过真实模型调用），保留主 Agent 的 PTY 证据。
+- 独立代码审查（`ReviewCliDiff`）：首轮 4 项中等缺陷已修复；delta 复核 **approve**，无阻塞项。
+
+### 修饰键协议（2026-11-24）
+
+- 环境：macOS arm64，`.venv` Python 3.13；PTY 100×30，`TERM_PROGRAM=iTerm.app`、`TERM=xterm-256color`，临时 `HOME` 与指向 `127.0.0.1:9` 的假渠道。
+- 命令与步骤：`./tests/run.sh`；`python -m aaa` 在 PTY 中启动后输入 `hello` + `ESC[27;2;13~` + `world` + 一次 Ctrl-C，再两次 Ctrl-C 退出。
+- 预期依据：`src/aaa/cli/DESIGN.md` 三节「修饰键协议」。
+- 结果：326 项 OK；启动后输出 `ESC[>4;2m`；Shift+Enter 序列未提交、草稿保留（Ctrl-C 回显 `已清空草稿；按 Up 取回`）；退出输出 `ESC[>4m`，退出码 0。owner 在本机 iTerm2 3.7.7 用物理 Shift+Enter 确认换行生效（2026-11-24）。
+- 独立审查（`ReviewKeyProtocol`，13m49s，只读）：1 High + 4 Medium + 4 Low。已修并补测试：审批待决时 Shift+Enter 会误批准/误发送（新增 `approval_enter` 并校验 `KeyPress.data`）、Backspace 码 8 与 Alt 前缀、Ctrl+`[`/Ctrl+3 等 Esc 别名被吞、Super 组合被改写成普通字符、畸形 CSI-u 泄漏成字面文本、Ctrl+Shift+Tab 误切权限模式、Esc 与回车跨读取被融合、kitty 误列入支持名单。delta 复审未重跑。
+- 证据位置：本轮 PTY 转录、owner 现场确认与 `tests/run.sh` 输出；未覆盖 Windows 与 macOS Terminal。

@@ -55,20 +55,17 @@ class MemoryFixture(unittest.TestCase):
         agent = SimpleNamespace(db=db or self.db)
         return SimpleNamespace(settings=settings, runnable=agent, memory=memory)
 
-    @staticmethod
-    def _menu_fake(answer):
-        return SimpleNamespace(
-            application=SimpleNamespace(key_bindings=None, run=mock.Mock(return_value=answer))
-        )
-
     def run_command(self, state, text: str, *, action_choice=None, engine_choice=None):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             if text == "/memory":
-                # /memory 先弹操作菜单（action_choice，None 视为取消），
-                # 选「切换引擎」后 engine_choice 指定引擎（None 视为取消）。
-                with mock.patch.object(commands_mod.questionary, "select",
-                                       return_value=self._menu_fake(action_choice)), \
+                # 第一层返回 action_choice；若引擎选择被取消，回到动作菜单再按 Esc 退出。
+                answers = iter([
+                    commands_mod.picker.BACK if action_choice is None else action_choice,
+                    commands_mod.picker.BACK,
+                ])
+                with mock.patch.object(commands_mod, "_menu",
+                                       side_effect=lambda *a, **k: next(answers)), \
                         mock.patch.object(commands_mod, "_ask_engine_choice",
                                           return_value=engine_choice):
                     handled = handle_command(state, text)
@@ -188,14 +185,10 @@ class EngineSelectorTest(MemoryFixture):
         self.assertIn("已取消", out)
         self.assertEqual(state.settings.get("memory.source"), "off")
         self.assertFalse(self.config.exists())
-        # 中断（KeyboardInterrupt/EOF）在选择器内归一为取消，同样不改配置。
-        question = SimpleNamespace(application=SimpleNamespace(
-            key_bindings=None, run=mock.Mock(side_effect=KeyboardInterrupt),
-        ))
-        answers = iter([self._menu_fake("engine"), question])
+        # 中断（Ctrl-C/EOF）在选择器内归一为 ABORT，同样不改配置。
+        answers = iter(["engine", commands_mod.picker.ABORT, commands_mod.picker.BACK])
         buf = io.StringIO()
-        with mock.patch.object(commands_mod.questionary, "select",
-                               side_effect=lambda *a, **k: next(answers)), \
+        with mock.patch.object(commands_mod, "_menu", side_effect=lambda *a, **k: next(answers)), \
                 contextlib.redirect_stdout(buf):
             handled, out = handle_command(state, "/memory"), buf.getvalue()
         self.assertTrue(handled)
@@ -301,13 +294,11 @@ class EngineConfigTest(MemoryFixture):
     def test_menu_routes_config_action(self) -> None:
         apply_mock = mock.Mock(return_value="")
         state = self.state_with_specs(apply_mock)
-        selects = iter([self._menu_fake("config"), self._menu_fake("limits"),
-                        self._menu_fake("limits.search_limit")])
+        picks = iter(["config", "limits", "limits.search_limit"])
         buf = io.StringIO()
-        with mock.patch.object(commands_mod.questionary, "select",
-                               side_effect=lambda *a, **k: next(selects)), \
-                mock.patch.object(commands_mod.questionary, "text",
-                                  return_value=self._menu_fake("80")), \
+        with mock.patch.object(commands_mod, "_menu",
+                               side_effect=lambda *a, **k: next(picks)), \
+                mock.patch.object(commands_mod, "_ask_value", return_value="80"), \
                 contextlib.redirect_stdout(buf):
             self.assertTrue(handle_command(state, "/memory"))
         self.assertIn("已保存：limits.search_limit = 80", buf.getvalue())
@@ -366,10 +357,8 @@ class MemoryStartupTest(unittest.TestCase):
         self.assertIn("以记忆关闭状态启动", err.getvalue())
         self.assertEqual(settings.get("memory.source"), "external:broken")
         with contextlib.redirect_stdout(io.StringIO()) as out, \
-                mock.patch.object(commands_mod.questionary, "select",
-                                  return_value=SimpleNamespace(
-                                      application=SimpleNamespace(key_bindings=None,
-                                                                  run=mock.Mock(return_value=None)))):
+                mock.patch.object(commands_mod, "_menu",
+                                  return_value=commands_mod.picker.BACK):
             handle_command(state, "/memory")
         self.assertIn("记忆已关闭。", out.getvalue())
         self.assertEqual(state.runnable.run("问题").content, "回答")

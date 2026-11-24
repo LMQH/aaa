@@ -7,16 +7,16 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agno.run.base import RunStatus
-from prompt_toolkit.application import Application
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.filters import has_focus
-from prompt_toolkit.input import create_pipe_input
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, Window
-from prompt_toolkit.layout.controls import BufferControl
-from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.buffer import Buffer, CompletionState
+from prompt_toolkit.completion import Completion
 
-from aaa.cli.app import EXIT_CANCELLED, approval_pane, last_completed_run_id, run_once
+from aaa.cli.app import (
+    EXIT_CANCELLED,
+    ApprovalSelection,
+    enter_action,
+    last_completed_run_id,
+    run_once,
+)
 from aaa.cli.controller import Controller
 
 
@@ -219,47 +219,78 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.controller.busy)
 
 
-class ApprovalFocusTests(unittest.IsolatedAsyncioTestCase):
-    async def test_draft_keys_do_not_approve_and_focused_key_does(self):
-        ready, submitted, answered = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        replies, submissions = [], []
-        state = SimpleNamespace(approval=SimpleNamespace(name="shell"))
+class ApprovalSelectionTests(unittest.TestCase):
+    def test_new_approval_resets_selection_and_arms_after_delay(self):
+        selection = ApprovalSelection()
+        approval = SimpleNamespace(name="shell")
+        selection.sync(approval, now=10.0)
+        self.assertEqual(selection.index, 0)
+        self.assertFalse(selection.ready(now=10.2))
+        self.assertTrue(selection.ready(now=10.5))
+        selection.move(1)
+        self.assertEqual(selection.index, 1)
+        selection.sync(approval, now=11.0)
+        self.assertEqual(selection.index, 1)
+        selection.sync(SimpleNamespace(name="write"), now=12.0)
+        self.assertEqual(selection.index, 0)
+        self.assertFalse(selection.ready(now=12.4))
+        self.assertTrue(selection.ready(now=12.5))
 
-        def answer(value):
-            replies.append(value)
-            answered.set()
-        state.answer = answer
-        kb = KeyBindings()
-        pane, approval = approval_pane(kb, lambda: state)
-        draft = Buffer()
-        draft_control = BufferControl(buffer=draft)
 
-        @kb.add("enter", filter=has_focus(draft))
-        def submit(event):
-            submissions.append(draft.text)
-            submitted.set()
+class CompletionEnterTests(unittest.TestCase):
+    def _buffer(self, accepted):
+        return Buffer(
+            accept_handler=lambda buffer: accepted.append(buffer.text) or True,
+            multiline=False,
+        )
 
-        with create_pipe_input() as pipe:
-            app = Application(
-                layout=Layout(HSplit([pane, Window(draft_control)]), focused_element=draft_control),
-                key_bindings=kb, input=pipe, output=DummyOutput(), full_screen=False,
-            )
-            app.pre_run_callables.append(ready.set)
-            task = asyncio.create_task(app.run_async())
-            try:
-                await asyncio.wait_for(ready.wait(), 2)
-                pipe.send_text("y\r")
-                await asyncio.wait_for(submitted.wait(), 2)
-                self.assertEqual(submissions, ["y"])
-                self.assertEqual(replies, [])
-                self.assertEqual(draft.text, "y")
-                pipe.send_text("\x1bOQy")
-                await asyncio.wait_for(answered.wait(), 2)
-                self.assertEqual(replies, [True])
-                self.assertEqual(draft.text, "y")
-            finally:
-                app.exit()
-                await task
+    def _complete(self, buffer, text, complete_index):
+        buffer.complete_state = CompletionState(
+            buffer.document,
+            [Completion(text, start_position=-len(buffer.text))],
+            complete_index=complete_index,
+        )
+
+    def test_command_completion_applies_and_submits_only_after_navigation(self):
+        accepted = []
+        buffer = self._buffer(accepted)
+        buffer.insert_text("/co")
+        buffer.complete_state = CompletionState(
+            buffer.document, [Completion("/config", start_position=-3)], complete_index=0
+        )
+        enter_action(buffer, "\r", {"config"})
+        self.assertEqual(accepted, ["/config"])
+
+        accepted.clear()
+        buffer = self._buffer(accepted)
+        buffer.insert_text("/co")
+        buffer.complete_state = CompletionState(
+            buffer.document, [Completion("/config", start_position=-3)], complete_index=None
+        )
+        enter_action(buffer, "\r", {"config"})
+        self.assertEqual(accepted, ["/co"])
+
+    def test_argument_completion_only_applies_without_submitting(self):
+        accepted = []
+        buffer = self._buffer(accepted)
+        buffer.insert_text("/model d")
+        buffer.complete_state = CompletionState(
+            buffer.document, [Completion("deepseek/chat", start_position=-1)], complete_index=0
+        )
+        enter_action(buffer, "\r", {"config", "model"})
+        self.assertEqual(accepted, [])
+        self.assertEqual(buffer.text, "/model deepseek/chat")
+
+    def test_absolute_path_completion_is_not_treated_as_a_command(self):
+        accepted = []
+        buffer = self._buffer(accepted)
+        buffer.insert_text("/tmp/out")
+        buffer.complete_state = CompletionState(
+            buffer.document, [Completion("/tmp/out.md", start_position=-8)], complete_index=0
+        )
+        enter_action(buffer, "\r", {"config"})
+        self.assertEqual(accepted, [])
+        self.assertEqual(buffer.text, "/tmp/out.md")
 
 
 class CompletedRunTests(unittest.TestCase):

@@ -147,12 +147,12 @@ class Controller:
             try:
                 if self.render is not None:
                     self.render.preview_approval(data.name, data.args, data.diff)
-                    print("按 F2 聚焦审批，再按 y 批准或 n/Esc 拒绝。")
+                    print("审批待处理：↑↓ 选择，Enter 确认，Esc 拒绝。")
                 else:
                     if data.diff is not None:
                         print(f"{GLYPH['dot']} 改动预览\n{data.diff}")
                     detail = json.dumps(data.args, ensure_ascii=False, default=str) if data.args is not None else ""
-                    print(f"? {data.name} {detail}\n按 F2 聚焦审批，再按 y 批准或 n/Esc 拒绝。")
+                    print(f"? {data.name} {detail}\n审批待处理：↑↓ 选择，Enter 确认，Esc 拒绝。")
                 self.approval = data
                 self.phase = "approval"
                 self.invalidate()

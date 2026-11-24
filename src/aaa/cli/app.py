@@ -19,7 +19,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.application import in_terminal, set_app
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.filters import Condition, has_focus, is_done
+from prompt_toolkit.filters import Condition, is_done
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
@@ -30,7 +30,7 @@ from prompt_toolkit.layout import (
     VerticalAlign,
     Window,
 )
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import print_formatted_text
 
@@ -57,7 +57,8 @@ from .args import Options, parse_args
 from .commands import configure, handle_command, show_memory_status
 from .controller import Controller
 from .git_status import read_status
-from .key_input import create_cli_input, is_shift_enter
+from .key_input import create_cli_input, extended_keys, is_shift_enter
+from .render import sanitize
 from .run import HumanEmitter, JsonEmitter, PlainEmitter, stream_continue, stream_run
 from .state import AppState
 from .tool_details import ToolDetails
@@ -188,40 +189,61 @@ def run_once(
 
 
 
-def enter_action(buffer: Buffer, data: Optional[str]) -> None:
-    """Shift+Enter 只插入换行；其他回车按提交处理。"""
+APPROVAL_ARM_SECONDS = 0.5
+
+
+class ApprovalSelection:
+    """审批选择状态：新审批重置选中项，并给挂载保护期防止误确认。"""
+
+    def __init__(self) -> None:
+        self.index = 0
+        self.current = None
+        self.armed_until = 0.0
+
+    def sync(self, approval, now: Optional[float] = None) -> None:
+        now = time.monotonic() if now is None else now
+        if approval is not self.current:
+            self.current = approval
+            self.index = 0
+            self.armed_until = now + APPROVAL_ARM_SECONDS
+
+    def move(self, delta: int, count: int = 2) -> None:
+        self.index = (self.index + delta) % count
+
+    def ready(self, now: Optional[float] = None) -> bool:
+        now = time.monotonic() if now is None else now
+        return now >= self.armed_until
+
+
+def enter_action(buffer: Buffer, data: Optional[str], commands: Optional[set] = None) -> None:
+    """Shift+Enter 只换行；补全按 omp 语义：选中过才接受，命令名随后提交。"""
     if is_shift_enter(data):
         buffer.insert_text("\n")
-    else:
+        return
+    state = buffer.complete_state
+    if state is not None and state.completions:
+        current = state.current_completion
+        if current is not None:
+            buffer.apply_completion(current)
+            selected = current.text or ""
+            if commands is not None and selected.startswith("/") and selected[1:] in commands:
+                buffer.validate_and_handle()
+            return
+        buffer.cancel_completion()
+    buffer.validate_and_handle()
+
+
+def approval_enter(buffer: Buffer, data: Optional[str], ready: bool, selected: bool, answer) -> None:
+    """审批待决时的 Enter：Shift+Enter 只换行；草稿非空先拒绝并发送这条消息。"""
+    if is_shift_enter(data):
+        buffer.insert_text("\n")
+        return
+    if buffer.text.strip():
+        answer(False)
         buffer.validate_and_handle()
-
-
-def approval_pane(kb, get_controller):
-    """审批必须先显式切换焦点，普通草稿中的按键不会授权工具。"""
-    buffer = Buffer()
-    control = BufferControl(buffer=buffer)
-    active = Condition(lambda: get_controller() is not None and get_controller().approval is not None)
-    focused = active & has_focus(buffer)
-
-    @kb.add("f2", filter=active)
-    def focus_approval(event):
-        event.app.layout.focus(control)
-
-    @kb.add("y", filter=focused)
-    def approve(event):
-        get_controller().answer(True)
-
-    @kb.add("n", filter=focused)
-    @kb.add("enter", filter=focused)
-    @kb.add("escape", filter=focused, eager=True)
-    def reject(event):
-        get_controller().answer(False)
-
-    label = Window(
-        FormattedTextControl(lambda: f"审批 {get_controller().approval.name}：F2 聚焦，y 批准 / n 或 Esc 拒绝"),
-        height=1,
-    )
-    return ConditionalContainer(HSplit([label, Window(control, height=1)]), filter=active & ~is_done), control
+        return
+    if ready:
+        answer(selected)
 
 
 def last_completed_run_id(runnable, session_id):
@@ -347,7 +369,75 @@ def _run_application(
         kb = KeyBindings()
         controller = None
         tool_details = ToolDetails()
-        pane, approval_control = approval_pane(kb, lambda: controller)
+        approval_ui = ApprovalSelection()
+        approval_choices = (("批准", True), ("拒绝", False))
+
+        def approval_active() -> bool:
+            return controller is not None and controller.approval is not None
+
+        approval_filter = Condition(approval_active)
+
+        def sync_approval() -> None:
+            approval_ui.sync(controller.approval if controller is not None else None)
+
+        def approval_rows() -> FormattedText:
+            sync_approval()
+            approval = controller.approval
+            name = sanitize(approval.name) if approval is not None else ""
+            fragments = [("class:picker.title", f"审批 {name}")]
+            fragments.append(("", "\n"))
+            for index, (label, _) in enumerate(approval_choices):
+                selected = index == approval_ui.index
+                marker = GLYPH["pointer"] + " " if selected else "  "
+                style = "class:picker.selected" if selected else "class:picker.description"
+                fragments.append(("class:picker.pointer" if selected else "", marker))
+                fragments.append((style, label))
+                fragments.append(("", "   "))
+            fragments.append(("", "\n"))
+            fragments.append((
+                "class:picker.hint",
+                "↑↓ 选择 · Enter 确认 · Esc 拒绝",
+            ))
+            return FormattedText(fragments)
+
+        @kb.add("up", filter=approval_filter, eager=True)
+        def _(event) -> None:
+            sync_approval()
+            approval_ui.move(-1, len(approval_choices))
+
+        @kb.add("down", filter=approval_filter, eager=True)
+        def _(event) -> None:
+            sync_approval()
+            approval_ui.move(1, len(approval_choices))
+
+        @kb.add("enter", filter=approval_filter, eager=True)
+        def _(event) -> None:
+            sync_approval()
+            data = getattr(event.key_sequence[-1], "data", None) if event.key_sequence else None
+            approval_enter(
+                event.current_buffer,
+                data,
+                approval_ui.ready(),
+                approval_choices[approval_ui.index][1],
+                controller.answer,
+            )
+
+        @kb.add("escape", filter=approval_filter, eager=True)
+        def _(event) -> None:
+            controller.answer(False)
+
+        @kb.add("c-c", filter=approval_filter, eager=True)
+        def _(event) -> None:
+            buffer = event.current_buffer
+            if buffer.text:
+                buffer.reset()
+            else:
+                controller.answer(False)
+
+        @kb.add("pageup", filter=approval_filter, eager=True)
+        @kb.add("pagedown", filter=approval_filter, eager=True)
+        def _(event) -> None:
+            """审批期间不把 PageUp/PageDown 交给历史，避免替换草稿。"""
 
         def activity() -> str:
             if controller is None:
@@ -365,7 +455,7 @@ def _run_application(
             if is_done() or controller is None or controller.phase == "stopping":
                 return FormattedText([])
             if controller.approval is not None:
-                text = "y 批准 / n 或 Esc 拒绝" if has_focus(approval_control.buffer)() else "F2 聚焦审批"
+                text = "↑↓ 选择 · Enter 确认 · Esc 拒绝"
             elif controller.busy:
                 text = "Esc 打断"
             else:
@@ -373,11 +463,9 @@ def _run_application(
             return FormattedText([("class:status.hint", " " + text)])
 
         def invalidate() -> None:
-            if controller.approval is None and session.layout.current_control is approval_control:
-                session.layout.focus(session.default_buffer)
             session.app.invalidate()
 
-        @kb.add("c-o", filter=~has_focus(approval_control.buffer))
+        @kb.add("c-o", filter=~approval_filter)
         def _(event) -> None:
             if not tool_details.toggle():
                 print(f"{GLYPH['dot']} 暂无工具详情。")
@@ -386,7 +474,7 @@ def _run_application(
                 print(f"{GLYPH['dot']} 窗口太矮：收起草稿或放大窗口后再按 Ctrl-O。")
             event.app.invalidate()
 
-        details_open = Condition(lambda: tool_details.expanded) & ~has_focus(approval_control.buffer)
+        details_open = Condition(lambda: tool_details.expanded) & ~approval_filter
 
         @kb.add("pageup", filter=details_open)
         def _(event) -> None:
@@ -398,20 +486,18 @@ def _run_application(
             tool_details.scroll(1)
             event.app.invalidate()
 
-        @kb.add("escape", filter=~has_focus(approval_control.buffer))
+        @kb.add("escape", filter=~approval_filter)
         def _(event) -> None:
             if event.current_buffer.complete_state:
                 event.current_buffer.cancel_completion()
             elif tool_details.expanded:
                 tool_details.toggle()
                 event.app.invalidate()
-            elif controller.approval is not None:
-                print(f"{GLYPH['dot']} 审批待处理；按 F2 聚焦后可拒绝。")
             elif controller.busy:
                 controller.cancel()
 
 
-        @kb.add("s-tab")
+        @kb.add("s-tab", filter=~approval_filter)
         def _(event) -> None:
             if controller.busy:
                 print(f"{GLYPH['dot']} 运行中不能切换权限模式，请空闲后重试。")
@@ -426,20 +512,20 @@ def _run_application(
                 return
             event.app.invalidate()
 
-        @kb.add("c-j", filter=~has_focus(approval_control.buffer))
-        @kb.add("escape", "enter", filter=~has_focus(approval_control.buffer))
+        @kb.add("c-j", filter=~approval_filter)
         def _(event) -> None:
             event.current_buffer.insert_text("\n")
 
-        @kb.add("enter", filter=~has_focus(approval_control.buffer))
+        @kb.add("enter", filter=~approval_filter)
         def _(event) -> None:
             data = getattr(event.key_sequence[-1], "data", None) if event.key_sequence else None
-            enter_action(event.current_buffer, data)
+            known = {item[0][1:] for item in COMMANDS} | set(state.plugin_commands)
+            enter_action(event.current_buffer, data, known)
 
         cleared: List[str] = []
         last_interrupt = [0.0]
 
-        @kb.add("c-c", filter=~has_focus(approval_control.buffer))
+        @kb.add("c-c", filter=~approval_filter)
         def _(event) -> None:
             """Ctrl-C：清草稿可召回；900ms 内再次按下才退出。"""
             buffer = event.current_buffer
@@ -457,14 +543,18 @@ def _run_application(
             last_interrupt[0] = now
             print(f"{GLYPH['dot']} 再按一次 Ctrl-C 退出")
 
-        @kb.add("up", filter=~has_focus(approval_control.buffer))
+        @kb.add("up", filter=~approval_filter)
         def _(event) -> None:
-            if event.current_buffer.text or not cleared:
-                event.current_buffer.history_backward()
+            buffer = event.current_buffer
+            if buffer.complete_state:
+                buffer.complete_previous()
                 return
-            event.current_buffer.insert_text(cleared.pop())
+            if buffer.text or not cleared:
+                buffer.history_backward()
+                return
+            buffer.insert_text(cleared.pop())
 
-        @kb.add("c-g", filter=~has_focus(approval_control.buffer))
+        @kb.add("c-g", filter=~approval_filter)
         def _(event) -> None:
             buffer = event.current_buffer
             original = buffer.text
@@ -494,7 +584,7 @@ def _run_application(
 
             asyncio.create_task(edit_draft())
 
-        @kb.add("escape", "up", filter=~has_focus(approval_control.buffer))
+        @kb.add("escape", "up", filter=~approval_filter)
         def _(event) -> None:
             if event.current_buffer.text:
                 print(f"{GLYPH['dot']} 请先处理当前草稿。")
@@ -506,7 +596,7 @@ def _run_application(
                 else:
                     event.current_buffer.insert_text(text)
 
-        @kb.add("c-d", filter=~has_focus(approval_control.buffer))
+        @kb.add("c-d", filter=~approval_filter)
         def _(event) -> None:
             if event.current_buffer.text:
                 event.current_buffer.delete()
@@ -526,10 +616,19 @@ def _run_application(
             key_bindings=kb,
         )
         editor = session.layout.current_window
+        completion_open = Condition(lambda: session.default_buffer.complete_state is not None)
+
+        @kb.add("pageup", filter=completion_open & ~details_open & ~approval_filter)
+        def _(event) -> None:
+            event.current_buffer.complete_previous(count=5)
+
+        @kb.add("pagedown", filter=completion_open & ~details_open & ~approval_filter)
+        def _(event) -> None:
+            event.current_buffer.complete_next(count=5)
 
         def layout_rows() -> tuple[int, int]:
             size = session.app.output.get_size()
-            above = 1 + bool(activity()) + (2 if controller and controller.approval else 0)
+            above = 1 + bool(activity()) + (3 if controller and controller.approval else 0)
             # Leave a terminal line outside the active area; long drafts scroll in the editor.
             available = max(1, size.rows - above - 1)
             draft_rows = editor.content.preferred_height(
@@ -548,6 +647,7 @@ def _run_application(
             session.reserve_space_for_menu = draft_rows + menu_rows if menu_rows else 0
 
         session.app.before_render += reserve_completion_rows
+        session.app.before_render += lambda app: sync_approval()
 
         def pane_rows() -> int:
             draft_rows, remaining = layout_rows()
@@ -608,6 +708,10 @@ def _run_application(
             Window(FormattedTextControl(activity, style="class:status.activity"), height=1, wrap_lines=False),
             filter=~is_done & Condition(lambda: bool(activity())),
         )
+        approval_view = ConditionalContainer(
+            Window(FormattedTextControl(approval_rows), height=3, wrap_lines=False),
+            filter=~is_done & approval_filter,
+        )
         status_view = ConditionalContainer(
             Window(
                 FormattedTextControl(lambda: status_line(session.app.output.get_size().columns)),
@@ -616,7 +720,7 @@ def _run_application(
             filter=~is_done,
         )
         session.layout.container = HSplit(
-            [todo_view, detail_view, pane, activity_view, status_view, session.layout.container],
+            [todo_view, detail_view, approval_view, activity_view, status_view, session.layout.container],
             align=VerticalAlign.TOP,
         )
 
@@ -817,7 +921,7 @@ def _run_application(
             renderer.close()
 
     try:
-        with patch_stdout(), closing(create_cli_input()) as terminal_input:
+        with extended_keys(), patch_stdout(), closing(create_cli_input()) as terminal_input:
             asyncio.run(interactive(terminal_input))
     finally:
         reset_cursor_color()

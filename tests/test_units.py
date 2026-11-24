@@ -16,7 +16,6 @@ import time
 import unittest
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
 from agno.agent import Agent
@@ -730,21 +729,13 @@ class ExportCommandTest(unittest.TestCase):
         for agent in self._agents:
             agent.db.db_engine.dispose()
 
-    @staticmethod
-    def _menu_fake(answer):
-        """questionary 菜单替身：application.run 返回预置答案。"""
-        return SimpleNamespace(
-            application=SimpleNamespace(key_bindings=None, run=mock.Mock(return_value=answer))
-        )
-
     def test_session_bare_menu_rename_via_delegation(self) -> None:
         agent = self._agent([text("回答")])
         agent.run("问题", session_id="s-m")
         state = self._state(agent, "s-m")
-        fakes = iter([self._menu_fake("rename"), self._menu_fake("改过的标题")])
         buf = io.StringIO()
-        with mock.patch.object(commands_mod.questionary, "select", side_effect=lambda *a, **k: next(fakes)), \
-                mock.patch.object(commands_mod.questionary, "text", side_effect=lambda *a, **k: next(fakes)), \
+        with mock.patch.object(commands_mod, "_menu", return_value="rename"), \
+                mock.patch.object(commands_mod, "_ask_value", return_value="改过的标题"), \
                 contextlib.redirect_stdout(buf):
             self.assertTrue(handle_command(state, "/session"))
         self.assertIn("已改名", buf.getvalue())
@@ -756,8 +747,8 @@ class ExportCommandTest(unittest.TestCase):
         agent.run("问题", session_id="s-c")
         state = self._state(agent, "s-c")
         buf = io.StringIO()
-        with mock.patch.object(commands_mod.questionary, "select",
-                               return_value=self._menu_fake(None)), \
+        with mock.patch.object(commands_mod, "_menu",
+                               return_value=commands_mod.picker.BACK), \
                 contextlib.redirect_stdout(buf):
             self.assertTrue(handle_command(state, "/session"))
         # 菜单取消静默返回：不打印、不改动。
@@ -770,15 +761,14 @@ class ExportCommandTest(unittest.TestCase):
         state = self._state(agent, "s-e2")
         target = out_dir / "chosen.md"
         buf = io.StringIO()
-        with mock.patch.object(commands_mod.questionary, "text",
-                               return_value=self._menu_fake(str(target))), \
+        with mock.patch.object(commands_mod, "_ask_value", return_value=str(target)), \
                 contextlib.redirect_stdout(buf):
             self.assertTrue(handle_command(state, "/export"))
         self.assertTrue(target.is_file())
         self.assertIn("已导出", buf.getvalue())
         (out_dir / "chosen.md").unlink()
-        with mock.patch.object(commands_mod.questionary, "text",
-                               return_value=self._menu_fake(None)), \
+        with mock.patch.object(commands_mod, "_ask_value",
+                               return_value=commands_mod.picker.BACK), \
                 contextlib.redirect_stdout(buf):
             self.assertTrue(handle_command(state, "/export"))
         self.assertIn("已取消", buf.getvalue())
