@@ -150,6 +150,10 @@ def _runs(source: sqlite3.Connection) -> Iterable[Tuple]:
         except (TypeError, ValueError):
             logger.warning("跳过无法解析的 run_data：%s", row[0])
             continue
+        copied_from = data.get("forked_from_session_id")
+        if copied_from and copied_from != row[1]:
+            # 会话分叉复制来的轮次：用量已在原会话入账，不重复计。
+            continue
         yield (row[0], row[1], row[2], row[3], row[4], data)
 
 

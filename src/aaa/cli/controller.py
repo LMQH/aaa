@@ -23,6 +23,24 @@ class Approval:
     answer: bool = False
 
 
+def interrupt_message(original: Optional[str], calls: list, text: str) -> str:
+    """停止后发送的消息：把打断前的请求与已发生的工具调用拼在新指示前面。
+
+    被取消的轮次不进入模型上下文，模型只能从这条消息知道之前要做什么、已经做了什么。
+    """
+    parts = [
+        "<interrupted_run>上一轮运行已被用户取消，它的内容不在你的上下文里。"
+        "下面是打断前的情况，请依据最后的新指示决定如何继续。</interrupted_run>"
+    ]
+    if original:
+        parts.append(f"打断前的请求：\n{original}")
+    if calls:
+        lines = [f"- {format_tool(call['name'], call['args'])}（{call['status']}）" for call in calls]
+        parts.append("打断前已发生的工具调用（可能已经产生实际效果，未完成的调用结果未知）：\n" + "\n".join(lines))
+    parts.append(f"新指示：\n{text}")
+    return "\n\n".join(parts)
+
+
 class InteractiveEmitter:
     """Workers publish events; only the UI loop renders and answers approvals."""
 
@@ -63,6 +81,9 @@ class Controller:
         self.shutdown = False
         self.done = asyncio.Event()
         self.done.set()
+        self.after_stop: Optional[tuple] = None
+        self.current_text: Optional[str] = None
+        self.tool_calls: list = []
 
     @property
     def busy(self):
@@ -74,10 +95,13 @@ class Controller:
         except Exception:
             logger.exception("interactive redraw failed")
 
-    def start(self, worker):
+    def start(self, worker, text=None):
         self.token += 1
         token = self.token
         handle = {"run_id": None, "cancel_requested": False}
+        self.after_stop = None
+        self.current_text = text
+        self.tool_calls = []
         self.handle = handle
         self.session_id = self.state.session_id
         self.phase = "starting"
@@ -111,7 +135,20 @@ class Controller:
                 self.handle = None
                 self.phase = "idle"
                 self.done.set()
-                self.redraw()
+        held, self.after_stop = self.after_stop, None
+        if held is not None:
+            if self.shutdown or self.state.session_id != held[1]:
+                self.queue.appendleft(held)
+            elif summary.get("cancelled"):
+                self._send_after_stop(interrupt_message(self.current_text, self.tool_calls, held[0]), held)
+                return
+            elif not (summary.get("error") or summary.get("interrupted")):
+                # 取消来得太晚，运行已正常完成：按普通消息发出。
+                self._send_after_stop(held[0], held)
+                return
+            else:
+                # 取消未确认或运行出错：退回队首，沿用队列暂停规则。
+                self.queue.appendleft(held)
         if summary.get("error") or summary.get("cancelled") or summary.get("interrupted") or handle["cancel_requested"]:
             self.queue_paused = True
             if self.queue:
@@ -168,6 +205,7 @@ class Controller:
             else:
                 print()
         else:
+            self._track_tools(kind, data)
             if self.render is not None:
                 self.render.event(kind, **data)
             elif kind == "content":
@@ -214,7 +252,50 @@ class Controller:
         self.shutdown = True
         self.cancel()
 
+    def _track_tools(self, kind, data):
+        """记录本轮已发生的工具调用及状态，供停止后发送的消息说明打断前的进度。"""
+        if kind == "tool_start":
+            self.tool_calls.append({
+                "name": str(data.get("tool", "")), "args": data.get("args"),
+                "call_id": data.get("call_id"), "status": "未完成",
+            })
+        elif kind in ("tool_done", "tool_error"):
+            call_id = data.get("call_id")
+            for call in reversed(self.tool_calls):
+                if call["status"] == "未完成" and call["name"] == str(data.get("tool", "")):
+                    if call_id is not None and call["call_id"] not in (None, call_id):
+                        continue
+                    call["status"] = "出错" if kind == "tool_error" or data.get("error") else "完成"
+                    break
+
+    def _send_after_stop(self, text, held):
+        """发送停止后发送的消息；派发失败则退回队首并暂停队列。"""
+        try:
+            self.dispatch(text, True)
+        except Exception as exc:
+            self.queue.appendleft(held)
+            self.queue_paused = True
+            logger.exception("stop-then-send dispatch failed")
+            print(f"{GLYPH['fail']} 打断后的消息未能发送，已放回队列：{exc}")
+        self.redraw()
+
+    def stop_and_send(self, text):
+        """登记「停止后发送」并请求取消；退出流程或空闲时返回 False。"""
+        if not self.busy or self.shutdown:
+            return False
+        self.after_stop = (text, self.state.session_id)
+        if self.handle["cancel_requested"]:
+            print(f"{GLYPH['dot']} 运行确认取消后立即发送。")
+        else:
+            self.cancel()
+            print(f"{GLYPH['dot']} 已请求打断，运行确认取消后立即发送。")
+        self.redraw()
+        return True
+
     def enqueue(self, text):
+        if self.busy and self.phase == "stopping" and not self.shutdown:
+            self.stop_and_send(text)
+            return
         if not self.queue:
             self.queue_paused = False
         self.queue.append((text, self.state.session_id))

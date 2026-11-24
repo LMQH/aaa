@@ -46,6 +46,7 @@ from ..context.params import compact_threshold
 from ..memory import MemoryEngineError, MemoryHost
 from ..model.catalog import Ambiguous, Resolved
 from ..runtime.logging_setup import setup_logging
+from ..sessions.fork import fork_before, user_turns
 from ..sessions.query import (
     ensure_session_name,
     find_session,
@@ -55,6 +56,7 @@ from ..sessions.query import (
 from ..todo_contract import normalize
 from ..usage.cost import cost_of
 from . import banner as banner_view
+from . import picker
 from . import report as report_panel
 from .args import Options, parse_args
 from .commands import configure, handle_command, show_memory_status
@@ -481,7 +483,7 @@ def _run_application(
             if controller.approval is not None:
                 text = "↑↓ 选择 · Enter 确认 · Esc 拒绝"
             elif controller.busy:
-                text = "Esc 打断"
+                text = "Esc 打断并发送 · Enter 排队" if session.default_buffer.text.strip() else "Esc 打断"
             else:
                 text = "Shift+Tab 切换权限"
             return FormattedText([("class:status.hint", " " + text)])
@@ -518,7 +520,12 @@ def _run_application(
                 tool_details.toggle()
                 event.app.invalidate()
             elif controller.busy:
-                controller.cancel()
+                draft = event.current_buffer.text
+                if draft.strip() and controller.phase != "stopping":
+                    controller.stop_and_send(draft)
+                    event.current_buffer.reset()
+                else:
+                    controller.cancel()
 
 
         @kb.add("s-tab", filter=~approval_filter)
@@ -814,7 +821,7 @@ def _run_application(
                 return summary
 
             tool_details.clear()
-            controller.start(worker)
+            controller.start(worker, text)
 
         def start_continue(kwargs: Dict) -> None:
             agent, session_id = state.runnable, state.session_id
@@ -831,7 +838,7 @@ def _run_application(
                 )
 
             tool_details.clear()
-            controller.start(worker)
+            controller.start(worker, kwargs.get("input"))
 
 
         def is_report(text: str) -> bool:
@@ -860,6 +867,49 @@ def _run_application(
             for item in lines:
                 print(item[0] if isinstance(item, tuple) else item)
             return handled
+
+        prefill: List[str] = []
+
+        def fork_command(text: str) -> None:
+            """/fork：回到某一轮之前，当前会话分叉成新会话并切过去。"""
+            argument = text[len("/fork"):].strip()
+            number, message = None, ""
+            if argument:
+                parts = argument.split(None, 1)
+                if not parts[0].isdigit():
+                    print(f"用法：{GLYPH['prompt']} /fork [轮次] [新消息]")
+                    return
+                number = int(parts[0])
+                message = parts[1].strip() if len(parts) > 1 else ""
+            turns = user_turns(state.runnable, state.session_id)
+            if not turns:
+                print(f"{GLYPH['dot']} 本会话还没有可回到的轮次。")
+                return
+            if number is None:
+                picked = picker.choose(
+                    "回到哪一句之前",
+                    [picker.Item(turn, f"{turn.number}  {' '.join(turn.text.split())}") for turn in turns],
+                    subtitle="Enter 选择 · Esc 取消", theme=str(settings.get("ui.theme")),
+                )
+                if picked in (picker.BACK, picker.ABORT):
+                    return
+                turn = picked
+            else:
+                turn = next((item for item in turns if item.number == number), None)
+                if turn is None:
+                    print(f"{GLYPH['fail']} 没有第 {number} 轮；可用的轮次是 1–{turns[-1].number}。")
+                    return
+            if turn.number == 1:
+                state.select_session(None)
+                print(f"{GLYPH['ok']} 已新建会话 {state.session_id}，回到第 1 轮之前。")
+            else:
+                new_id = fork_before(state.runnable, state.session_id, turn.run_id, user_id=_user_id(state))
+                state.select_session(find_session(state.runnable, new_id, state.settings))
+                print(f"{GLYPH['ok']} 已分叉到会话 {state.session_id}，回到第 {turn.number} 轮之前；原会话保持不变。")
+            if message:
+                start_turn(message)
+            else:
+                prefill.append(turn.text)
 
         def dispatch(text: str, from_queue: bool = False) -> None:
             text = text.strip()
@@ -901,6 +951,9 @@ def _run_application(
                 except SystemExit:
                     return
                 start_turn(f"（用户发来一张图片：{Path(raw).name}，请查看并回应。）", images)
+                return
+            if text == "/fork" or text.startswith("/fork "):
+                fork_command(text)
                 return
             if text == "/redo" or text == "/edit" or text.startswith("/edit "):
                 new_text = text[len("/edit"):].strip() if text != "/redo" else None
@@ -963,6 +1016,7 @@ def _run_application(
 
         git_task = asyncio.create_task(git_loop())
         pending = options.message
+        draft = ""
         try:
             while not controller.shutdown:
                 if pending is not None:
@@ -971,7 +1025,7 @@ def _run_application(
                 else:
                     try:
                         text = await session.prompt_async(
-                            FormattedText([("class:prompt", EDITOR_PROMPT)])
+                            FormattedText([("class:prompt", EDITOR_PROMPT)]), default=draft,
                         )
                     except KeyboardInterrupt:
                         continue
@@ -986,6 +1040,7 @@ def _run_application(
                     print(f"{GLYPH['fail']} 命令失败：{exc}")
                 if state.session_id != before_session:
                     reload_session_hud()
+                draft = prefill.pop(0) if prefill else ""
         finally:
             if controller.busy:
                 controller.request_exit()

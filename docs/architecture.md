@@ -35,7 +35,7 @@ src/aaa/
 ├── tools/       # 工具域与装配：builtin/（文件、检索、进程、待办）、extensions/（天气）
 ├── memory/      # 外置记忆协议、插件发现、召回/观察/工具；内置记忆只读投影
 ├── usage/       # 用量与花费：读 Agno metrics，写独立账本 usage.db
-├── sessions/    # 会话查询、命名、标题、目录→会话索引
+├── sessions/    # 会话查询、命名、标题、分叉、目录→会话索引
 └── cli/         # 入口、参数、命令、状态、渲染、事件消费
 
 src/miniviking/  # 随 aaa 分发的外置记忆引擎：文件树事实源 + SQLite 派生索引 + LLM 蒸馏
