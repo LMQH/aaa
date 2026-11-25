@@ -25,7 +25,7 @@
 - `usage` — 读 Agno metrics，写独立 `usage.db` 账本。
 - `sessions/query`、`sessions/index` 与 `sessions/fork` — 会话查询、标题、目录→会话索引与会话分叉。
 - `todo_contract` — TODO 条目契约，tools 与 CLI 共用。
-- `plugins` — 命令模板、技能、MCP 插件的发现与启停。
+- `plugins` — 命令模板、技能、MCP 插件的发现与启停；技能包由技能根的分组目录投射（`PACK.md` 描述、`.disabled` 停用）。
 - `cli/{args,app,state,run,ui,completer,commands,controller,render,diff,git_status,banner,key_input,tool_details}` — 入口、调度、渲染、输入适配、工具详情、事件与斜杠命令。
 - `cli/picker` — 自建选择器与单行输入：`❯` 强调色选中、无底色、输入筛选、Esc 逐级返回。
 - `cli/animations` — 启动动画插件：协议、发现与加载；默认 `default`，可选 `sharingan`。默认动画为 6 行块状 `A` 标识 + 半块 `AAA` 字标，版本贴末行，渐变旋转 + 高光扫过。
@@ -77,14 +77,25 @@
 
 按工作线分组，只保留最新证据；历史批次在版本控制记录中。
 
-### e2e 压缩用例脱离 tokenhub（2026-11-25）
+### 技能包（目录即包，2026-11-25）
+
+- 环境：macOS arm64，`.venv` Python 3.13。单测用临时目录；界面走查用 PTY（默认 80 列）、临时 HOME、合成技能（平铺 1 个 + `lark-cli` 包内 2 个，附 `PACK.md`）与指向 `127.0.0.1:9` 的假渠道。
+- 变更：撤 TOML 声明式包。发现改 Hermes 语义——任意深度，含 `SKILL.md` 的目录即技能且不再下钻（点目录、符号链接目录、技能支持目录不进）；`<根>/<包>/…` 归包，包名取根下第一段；`PACK.md` 给包描述；`.disabled` 支持技能与包两级停用。索引 names-only（`PackSkills`：包条目 = 名字 + 描述 + 成员名单，包内技能描述省略、名字保留；read-only 变体 `without_scripts()` 保留包视图并收起脚本工具）。信任指纹与发现共用遍历：嵌套技能文件与 `PACK.md` 全部进指纹。`GatedSkills` 由 `PackSkills` 取代，TOML 读写、`SKILL_PACKS_FILE` 与 `packs_file` 装配参数移除。
+- 命令与步骤：`uvx ruff==0.17.6 check src tests`；`./tests/run.sh`（484 项 OK，skip 1）；`tests/test_skill_packs.py` 18 项；PTY 里 `/skills`、`/insight`、`/plugin` → 回车停用 → 重启 → `/skills`、`/insight` → `/plugin lark-cli` 启用 → 重启 → `/skills`。
+- 预期依据：`docs/extending/skills.md`「技能包」一节，`src/aaa/runtime/DESIGN.md` 装配节的技能条。
+- 结果：ruff 全过，484 项 OK。单测覆盖：递归发现（平铺与包内并存、支持目录与点目录不误判、符号链接不下钻）、两级停用、跨根同名优先级不变、names-only 渲染（包条目含描述与成员名单、包内描述省略、成员正文可读、无包技能保持完整条目）、read-only 保留包视图并收脚本工具、信任指纹含嵌套文件与 `PACK.md`、`/plugin` 切包写 `.disabled`、`/skills` 带 `[包名]`。PTY：初始 `/skills` 列出平铺与包内技能（`[lark-cli]` 标签）；`/plugin` 停用 `lark-cli` 提示重启生效；重启后 `/skills` 只剩平铺技能；启用后恢复。
+- 独立 QA（`QaDirPacks`，4 分 14 秒，只读；受审修订 HEAD `a86ba1b` + 工作区）：9 条全部 PASS，无阻断缺陷；发现 1 项低危 D1——跨根同名时包归属与装配赢家脱节（平铺赢家被标成包成员），已修复并补回归测试；残余：索引替换正则绑定 Agno 3.1.12 的文本格式（升级改格式会静默退化）、名为支持目录的包不可见、`/insight` 面板数值与 Windows 未覆盖。
+- 真机 lark 包：`~/.agents/skills/lark/` 收纳 28 个 `lark-*` 技能，`PACK.md` 写触发场景；进程内装配 92 个技能、索引 12,306 → 5,374 tokens（−56%），成员描述省略、名字保留。注意：`.skill-lock.json`（安装器账本）对这批记录已失真，安装器同步可能重装回平铺；omp 新会话看不到包内技能。
+
+### e2e 渠道与临时目录（2026-11-25）
 
 - 环境：macOS arm64，`.venv` Python 3.13；真实渠道，默认渠道为 `deepseek/deepseek-flash`，每个用例独立临时 HOME。
-- 命令与步骤：`uvx ruff==0.17.6 check tests/e2e.py`；`tests/e2e.py --suite p1`；`tests/e2e.py --suite p0 --only P0.6`。
-- 预期依据：P1.7、P1.8 的窗口改在本次运行真正使用的渠道上（与 P0.6 同一个取法），自动压缩按 `context_window − 16384` 的阈值触发。
-- 结果：ruff 全过。P1.7 第 4 轮触发自动压缩 PASS；P1.8 PASS（答对但未走检索工具，可能仍在保留尾内）；P0.6 换用共用取法后 PASS（exit=1，日志有 ERROR）。P1 合计 52.6 秒。
-- 证据位置：本节与 `tests/e2e.py`。
-- 未覆盖：P1.8 未实际走到 `search_compacted_history`；P2.12 的 PTY 用例仍写死 `deepseek` 的 api_key，不在本条范围。
+- 命令与步骤：`uvx ruff==0.17.6 check tests/e2e.py tests/pty_cases.py`；`tests/e2e.py --suite p1`；`tests/e2e.py --suite p0 --only P0.6`；`tests/e2e.py --pty --only P2.12`。
+- 预期依据：P1.7、P1.8 的窗口改在本次运行真正使用的渠道上（与 P0.6 同一个取法），自动压缩按 `context_window − 16384` 的阈值触发；P2.12 改用本机第一个 deepseek 协议渠道，没有则 SKIP；临时目录统一建在本次运行的根下，跑完删除，有失败或带 `--keep-temp` 时保留并打印路径；PTY 读取按截止时间返回，不再被静默子进程无限阻塞。
+- 结果：ruff 全过。P1.7 第 4 轮触发自动压缩 PASS；P1.8 PASS（答对但未走检索工具，可能仍在保留尾内）；P0.6 换用共用取法后 PASS（exit=1，日志有 ERROR）；P2.12 PASS（11 秒，探到 1 个模型，落盘权限 0600）。P1 合计 52.6 秒。成功跑完临时目录数不变（29→29）；`--keep-temp` 保留并打印路径；失败的运行保留目录。
+- 过程：P2.12 先按「把渠道地址打进 Base URL」改过，向导的预填默认值会追加成非法地址、探查失败；改回接受向导默认值后通过。
+- 证据位置：本节与 `tests/e2e.py`、`tests/pty_cases.py`。
+- 未覆盖：P1.8 未实际走到 `search_compacted_history`；`--no-proxy` 仍不生效（`STRIP_PROXY` 只赋值、无人读取），本轮未修。
 
 ### 会话分叉、打断并发出、中文提示词与工具作用范围（2026-11-24）
 
