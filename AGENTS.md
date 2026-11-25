@@ -35,7 +35,9 @@
 - 只 `git add` 明确路径；禁 `git add -A`、`git add .`。提交前先 `git status`，确认暂存区只有自己的文件。
 - 禁 `git commit --no-verify`；禁 `git reset --hard`、`git checkout .`、`git clean -fd`、`git stash`；禁 force push。
 - 冲突只解自己改的文件；冲突涉及未改文件时停下问用户。
-- commit message 用 `type(scope): 摘要`，type 取 `feat`/`fix`/`docs`/`test`/`chore`；摘要说明做了什么，不复述 diff。
+- commit message 用 `type(scope): 摘要`，type 取 `feat`/`fix`/`docs`/`test`/`chore`；摘要说明做了什么，有信息量且简短，不复述 diff。
+- 摘要写结果或影响，不复述实现手段；行数、颜色、字段名这类细节放正文。
+- 提交信息、issue 与 PR 评论、代码里不用 emoji；界面图标用单宽文字符号（`❯`、`◆`、`⚒` 等）。
 - 不提交密钥、`.env`（`.env.example`/`.env.sample` 除外）、`secret.yaml`、`*.pem`、`*.key`、`*.db`、`dist/`、`.venv/`。`uv.lock` 变更需显式确认；pre-commit 会阻断，确需提交时用 `AAA_ALLOW_LOCKFILE_CHANGE=1`。
 - 克隆后执行 `git config core.hooksPath .githooks` 启用本地 pre-commit。hooks 可被 `--no-verify` 绕过，服务端 CI 仍是最终门。
 

@@ -16,6 +16,10 @@
 
 包含：输入与运行状态协调、命令统一分派、错误反馈、主屏渲染、状态条、TODO 呈现、工具详情、终端兼容、非交互隔离、会话分叉与打断并发出。保持既有命令名、权限模式、插件目录与重启生效约定。
 
+**终端内图片（已定）**：环境变量探测协议（`TERM_PROGRAM` iTerm.app/WezTerm → OSC 1337；`KITTY_WINDOW_ID`/`-kitty`/ghostty → kitty graphics），不做阻塞查询；tmux 内与未知终端一律文本降级（`[图片] 名称 WxH NKB`）。两个入口：`/image` 的本地预览、工具结果中「整行即存在的图片路径」自动渲染（只认整行，避免 JSON 误伤）。体积上限 `ui.image_max_kb`，开关 `ui.images`；编码/探测在 `cli/images.py`，带转义序列的写入必须走 `app.output.write_raw`（`write` 会把 `ESC` 换成 `?`），随后 `invalidate`。
+
+**可插拔外部渲染器（已定）**：`cli/renderers.py` 把「内容 → 外部命令流水线 → PNG」做成规格表，每步是一个外部命令（`RenderStep`），流水线命令齐全该内容才注册——默认不安装任何渲染器，渲染不是必需能力。内置两条：`mermaid → mmdc`（mermaid-cli）；`math → latex` 再 `dvipng`（需 TeX Live 或 MacTeX，含 standalone 类）。公式包成 `standalone` 最小文档，正文必须写成 `$\displaystyle …$`：standalone 把正文装进盒子，行间公式标记在其中非法（真实 TeX 报 `Missing $ inserted`）；公式自带的外层行间标记先剥掉。`MarkdownStream.on_code_block` 在块落地时把整块交给钩子：认带语言的代码围栏与 `$$…$$` 公式块（模型写公式更常用后者，块内再含 `$$` 的散文不认）。命令齐全且终端支持图片协议时，后台线程执行流水线，产物按「流水线 + 源码」哈希缓存，成功后走图片输出；任一步失败、超时（`ui.render_timeout`）或未安装时原样显示源码块，对未安装者零影响。开关 `ui.external_renderers`。公式链已在真实 TeX Live 2026 上验收；`RealTexTest` 在装有 latex 与 dvipng 的机器上用真 TeX 复验包装写法，未安装则跳过。
+
 不包含：新增 agent 执行循环、运行中插话注入、Vim/鼠标/语音、多窗格全屏应用、MCP 实测、发布部署。
 
 ## 二、外观
@@ -81,7 +85,9 @@
 
 ### 修饰键协议
 
-终端默认不区分 Shift+Enter：两者都发同一个 CR。CLI 在会话启动时对已实现 xterm `modifyOtherKeys` 的终端（iTerm2、WezTerm、ghostty、VS Code；tmux 内还需 `extended-keys` 与外层终端支持）写 `ESC[>4;2m`，正常退出与 Python 异常都写 `ESC[>4m` 还原；进程被信号杀死时不还原。不在名单内的终端保持原样（kitty 不实现该协议，尚未接入），需用户自行映射。
+终端默认不区分 Shift+Enter：两者都发同一个 CR。CLI 在会话启动时对已实现 xterm `modifyOtherKeys` 的终端（iTerm2、WezTerm、ghostty、VS Code；tmux 内还需 `extended-keys` 与外层终端支持）写 `ESC[>4;2m`，正常退出与 Python 异常都写 `ESC[>4m` 还原；进程被信号杀死时不还原。不在名单内的终端保持原样（kitty 不实现该协议，尚未接入），需用户自行映射。默认配置的 tmux 会把 Shift+Enter 压成回车，而白名单仍把它视为可用：因此在 tmux 内且 `extended-keys` 未开启时，启动摘要后多打一行修复提示（`key_input.tmux_extended_keys_hint`，`tmux show-options -s extended-keys` 为 off 时触发，查询失败静默）。
+
+已知限制（只说明、不修，owner 2026-11-25 决定）：终端类型靠 `TERM_PROGRAM` 等环境变量判断，而 ssh 默认不转发它们，所以经 ssh 直连远端时远端的 aaa 认不出终端、不开启扩展键，Shift+Enter 不可用；套一层 tmux 时 `TERM_PROGRAM=tmux` 由 tmux 自己设置，不受影响。用户文档指向 `Ctrl-J`/`Alt+Enter`。
 
 开启后终端把所有带修饰键的按键重新编码为 `ESC[27;<mod>;<cp>~`（Kitty 为 `ESC[<cp>;<mod>u`），prompt_toolkit 3.0.53 几乎不认。`cli/key_input.py` 在字节层把它们还原成既有绑定认得的传统字节：Ctrl+字母与 Ctrl+`@ [ \ ] ^ _`/数字 → 控制字节（含 Ctrl+[ 即 Esc）、Shift+字母 → 大写字符、Alt+字母 → `ESC`+字符、Backspace（码 8/127）→ `DEL`（Alt 加 `ESC` 前缀，走 backward-kill-word）、Shift+Tab → `ESC[Z`；Ctrl+Shift+Tab 等同 Tab，不改权限模式。Super/Meta 组合、Kitty 松键事件与无法表示的组合被吞掉，避免原始序列泄漏成字面文本。Shift/Alt/Ctrl+Enter 在同一批输入内归一为携带原始序列的换行标记（`KeyPress.data`），`enter_action` 与审批的 Enter 据此只插入换行、绝不提交或授权；Esc 与紧随其后的回车分属两次读取时保持「先取消、再提交」，不融合成换行。Bracketed paste 内容不翻译。代价是 Option+字母 在开启后按 Alt 语义处理，不再输入组合字符。
 
@@ -114,6 +120,8 @@
 
 - **有界选择集的命令必须同时提供两种等价路径**：裸命令弹多级菜单（引导路径），带参数直达同一动作（快捷路径），两者效果一致。现状符合：`/config`、`/memory`、`/model`、`/session`、`/plugin`、`/fork`；`/export` 裸命令确认预填路径。
 - **空闲命令菜单统一由 `cli/picker.py` 渲染**：`❯` 前缀 + 主题强调色、无背景色块，`↑↓` 移动、输入即筛选、`Enter` 确认；`Esc` 返回上一级，根层 `Esc` 取消，`Ctrl-C` 放弃整个命令。选择器在独立循环运行，不嵌套主 REPL 事件循环。首次启动与 `/provide` 的渠道向导继续用 questionary 承载密码、多选等表单，只有其中的选择列表可逐步迁移。
+
+- **主题用语义 token 表达（已定）**：`cli/ui.py` 的 `THEME_TOKENS` 为每个主题定义 19 个 token（`fg`/`bright`/`muted`/`meta`/`dim`/`border`/`surface`/`accent`/`prompt`/`activity`/`success`/`warning`/`error` 与 `c1`–`c6`），`CLASS_TEMPLATES` 把界面类名映射到样式模板（`{token}` 占位），个别主题的取舍差异集中在 `THEME_CLASS_OVERRIDES`。改配色只动 token，新增界面元素只加一行模板；最终样式串由 `PT_STYLES` 生成，`error` 为失败态预留、尚无界面元素使用。
 - **行内补全菜单自建渲染**（`ui.completion_rows`）：选中行用 `❯` 指针 + 强调色，命令列按最长项对齐，描述列紧随其后，最右一列是 `█`/`│` 滚动条；prompt_toolkit 自带浮层被关闭，避免两套菜单叠加。行数由 `ui.completion_rows` 控制。回车仍只在用 `↑↓` 主动选中后才接受补全，直接回车照常提交。
 - **只读报告进全屏面板**：`/help`、`/todos`、`/skills`、`/insight`、`/trust`、`/usage` 的输出由 `cli/report.py` 渲染成带标题（命令原文）与底部 `↑/↓ 滚动 · Esc 关闭` 的边框面板，不写进滚动历史；`Esc` 或 `Ctrl-C` 关闭后回到输入区。实现与选择器同构（独立循环里的全屏 Application）。报告行可携带样式；`/usage` 用对齐表（表头 `table.header`、合计行 `table.total`，数值右对齐，缺价显示 `—`）而不是 `----` 分隔线。其余命令的短结果、错误与动作确认保持行内打印。
 - **`/config` 是页签式设置面板**（`cli/settings_view.py`）：顶部页签按域分三段（`·` 分隔、`│` 分段），对应设置组（外观/模型/上下文/记忆/工具/会话/权限/委派/日志/扩展）；外观与记忆两页带左侧分组列，各组左侧用竖条标出范围、分组名对齐首行、组间以空行分隔，不再重复分组标题；键名暗、值亮且值列紧随名称列，选中整行强调色，列表超出时右缘显示滚动条；底部一行描述当前键并按 `apply` 标注「立即生效 / 重启生效」，外观页另有一行状态行预览。`↑↓` 移动、`←→` 切页、`⇥` 跳分组、`⏎/空格` 改值（布尔切换、枚举循环、文本/数值内联输入）、直接输入即全局搜索、`Esc` 先清搜索再关闭。写入沿用 `set_setting`：校验、落盘、按 apply 语义生效，非法值就地报错。`/config <键> [值]` 与 `/config start` 快捷路径保留。

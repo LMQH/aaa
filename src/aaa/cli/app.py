@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from contextlib import closing, redirect_stdout
 from datetime import datetime
@@ -57,14 +58,21 @@ from ..sessions.query import (
 from ..todo_contract import normalize
 from ..usage.cost import cost_of
 from . import banner as banner_view
+from . import images as images_mod
 from . import picker
+from . import renderers as renderers_mod
 from . import report as report_panel
 from .args import Options, parse_args
 from .commands import configure, handle_command, show_memory_status
 from .controller import Controller
 from .git_status import read_status
-from .key_input import create_cli_input, extended_keys, is_shift_enter
-from .render import sanitize
+from .key_input import (
+    create_cli_input,
+    extended_keys,
+    is_shift_enter,
+    tmux_extended_keys_hint,
+)
+from .render import render_markdown, sanitize
 from .run import (
     ALWAYS_ALLOW,
     HumanEmitter,
@@ -415,6 +423,9 @@ def _run_application(
 
     if options.interactive and state.project_note:
         print(f"{GLYPH['dot']} {state.project_note}")
+    tmux_hint = tmux_extended_keys_hint()
+    if options.interactive and tmux_hint:
+        print(f"{GLYPH['dot']} {tmux_hint}")
 
     if not options.interactive:
         message = read_message(options)
@@ -1051,6 +1062,7 @@ def _run_application(
                     images = load_images([raw])
                 except SystemExit:
                     return
+                show_images([Path(raw).expanduser()])
                 start_turn(f"（用户发来一张图片：{Path(raw).name}，请查看并回应。）", images)
                 return
             if text == "/fork" or text.startswith("/fork "):
@@ -1073,6 +1085,33 @@ def _run_application(
                 print(f"{GLYPH['dot']} {notice}")
             start_turn(text, at_images)
 
+        protocol = images_mod.detect_protocol()
+        image_max_bytes = int(settings.get("ui.image_max_kb")) * 1024
+
+        def show_images(paths) -> None:
+            """终端内显示本地图片：协议可用则内联，否则打一行占位。"""
+            if not paths or not bool(settings.get("ui.images")):
+                return
+            for path in paths:
+                try:
+                    data = path.read_bytes()
+                except OSError:
+                    continue
+                if len(data) > image_max_bytes:
+                    print_formatted_text(f"[图片] {path.name} 超过 {settings.get('ui.image_max_kb')}KB，未内联显示")
+                    continue
+                if protocol is None:
+                    print_formatted_text(images_mod.label(path, data))
+                    continue
+                columns = session.app.output.get_size().columns
+                sequence = (
+                    images_mod.encode_iterm2(data, path.name, columns)
+                    if protocol == images_mod.ITERM2
+                    else images_mod.encode_kitty(data, columns)
+                )
+                session.app.output.write_raw(sequence + "\n")
+            session.app.invalidate()
+
         class AppRenderer(HumanEmitter):
             """事件先更新 HUD，再按统一渲染输出。"""
 
@@ -1092,6 +1131,12 @@ def _run_application(
                         pass
                 if kind != "model_start":
                     super().event(kind, **data)
+                if kind == "tool_done" and not data.get("error"):
+                    found = images_mod.find_image_paths(
+                        str(data.get("result") or ""), max_bytes=image_max_bytes,
+                    )
+                    if found:
+                        show_images(found)
 
         def reload_session_hud() -> None:
             tool_details.clear()
@@ -1104,6 +1149,32 @@ def _run_application(
 
         reload_session_hud()
         renderer = AppRenderer()
+        if bool(settings.get("ui.external_renderers")) and protocol is not None:
+            specs = renderers_mod.available()
+            if specs:
+                loop = asyncio.get_running_loop()
+                cache = Path(tempfile.gettempdir()) / "aaa-render"
+
+                def render_block(language: str, code: str) -> bool:
+                    """接管该围栏：后台渲染成图片；失败时回落为源码块。"""
+                    spec = specs.get(language)
+                    if spec is None:
+                        return False
+
+                    def work() -> None:
+                        png = renderers_mod.render(
+                            spec, code, timeout=float(settings.get("ui.render_timeout")), cache_dir=cache,
+                        )
+                        if png is not None:
+                            loop.call_soon_threadsafe(show_images, [png])
+                        else:
+                            fallback = render_markdown(f"```{language}\n{code}\n```", renderer.markdown.width, renderer.colors)
+                            loop.call_soon_threadsafe(renderer._write, "\n" + fallback)
+
+                    threading.Thread(target=work, name="aaa-render", daemon=True).start()
+                    return True
+
+                renderer.markdown.on_code_block = render_block
         controller = Controller(
             state, asyncio.get_running_loop(), refresh_hud, dispatch, invalidate, render=renderer
         )

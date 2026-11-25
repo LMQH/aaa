@@ -2,6 +2,7 @@
 
 import os
 import sys
+from typing import Dict
 
 import questionary
 from prompt_toolkit.styles import Style as PromptStyle
@@ -26,7 +27,7 @@ COMMANDS = [
     ("/mode", "切换权限模式（read-only / workspace-write / danger-full-access）"),
     ("/todos", "查看当前会话的任务清单"),
     ("/export", "导出当前会话为 markdown（可跟路径）"),
-    ("/image", "发送本地图片给模型：/image <路径>"),
+    ("/image", "发送本地图片给模型并尝试在终端内预览：/image <路径>"),
     ("/plugin", "查看或启停 MCP 插件与技能包（重启生效）：/plugin <名称>"),
     ("/skills", "列出发现的技能（模型可用 get_skill_instructions 读取）"),
     ("/panel", "查看/切换扩展面板：/panel <名>，off 关闭"),
@@ -86,113 +87,105 @@ ICONS = {} if ASCII_UI else {
     "/exit": "x",
 }
 
-# 输入区与补全菜单的样式：深色菜单、青色提示符，其余保持低对比。
-PT_STYLES = {
+# 主题语义 token：主题只定义这些颜色（THEME_TOKENS），类名到样式的模板三主题共用
+# （CLASS_TEMPLATES）。改配色只改 token 一处；新增界面元素只加一行模板。
+# 模板里用 `{token}` 占位；`error` 目前没有界面元素使用，为失败态预留。
+TOKENS = (
+    "fg", "bright", "muted", "meta", "dim", "border", "surface",
+    "accent", "prompt", "activity", "success", "warning", "error",
+    "c1", "c2", "c3", "c4", "c5", "c6",
+)
+
+THEME_TOKENS = {
     "default": {
-        "prompt": "ansicyan bold",
-        "status.logo": "#73808f",
-        "status.model": "#42c5f5",
-        "status.path": "#e0e5ed",
-        "status.git": "#e0a45b",
-        "status.cost": "#dec181",
-        "status.context": "#42aec9",
-        "status.sep": "#576270",
-        "status.hint": "#8d9bac italic",
-        "status.activity": "#e0a45b",
-        "completion-menu": "bg:default",
-        "completion-menu.completion": "bg:default #cfd6df",
-        "completion-menu.completion.current": "bg:default bold #42c5f5 noreverse",
-        "completion-menu.meta.completion": "bg:default #8d9bac",
-        "completion-menu.meta.completion.current": "bg:default bold #42c5f5",
-        "completion-menu.multi-column-meta": "bg:default #8d9bac",
-        "completion-icon": "#42c5f5",
-        "completion-command": "#ffffff",
-        "table.header": "bold #8d9bac",
-        "table.total": "bold #e0e5ed",
-        "picker.title": "bold #42c5f5",
-        "picker.subtitle": "#8d9bac italic",
-        "picker.pointer": "bold #42c5f5",
-        "picker.selected": "bold #42c5f5",
-        "picker.description": "#8d9bac",
-        "picker.hint": "#8d9bac italic",
-        "picker.query": "#e0e5ed",
-        "todo.title": "bold #8ab4f8",
-        "todo.phase": "bold #8ab4f8",
-        "todo.completed": "fg:#7bd88f strike",
-        "todo.in_progress": "bold fg:#ffd166",
-        "todo.pending": "fg:#9aa0a6",
+        "fg": "#e0e5ed", "bright": "#ffffff", "muted": "#8d9bac", "meta": "#8d9bac", "dim": "#73808f",
+        "border": "#576270", "surface": "default",
+        "accent": "#42c5f5", "prompt": "ansicyan", "activity": "#e0a45b",
+        "success": "#7bd88f", "warning": "#e0a45b", "error": "#ff6b6b",
+        # c1 上下文条、c2 费用、c3 补全正文、c4 待办标题、c5 进行中、c6 待处理
+        "c1": "#42aec9", "c2": "#dec181", "c3": "#cfd6df", "c4": "#8ab4f8", "c5": "#ffd166", "c6": "#9aa0a6",
     },
     # 高对比：亮色文字、更明显的选中态，适配低对比终端或投影。
     "contrast": {
-        "prompt": "ansiwhite bold",
-        "status.logo": "ansiwhite",
-        "status.model": "ansiyellow bold",
-        "status.path": "ansiwhite",
-        "status.git": "ansiyellow",
-        "status.cost": "ansiyellow",
-        "status.context": "ansicyan",
-        "status.sep": "ansiwhite",
-        "status.hint": "ansiwhite",
-        "status.activity": "ansiyellow bold",
-        "completion-menu": "bg:default",
-        "completion-menu.completion": "bg:default #ffffff",
-        "completion-menu.completion.current": "bg:default bold ansiyellow noreverse",
-        "completion-menu.meta.completion": "bg:default #bbbbbb",
-        "completion-menu.meta.completion.current": "bg:default bold ansiyellow",
-        "completion-menu.multi-column-meta": "bg:default #bbbbbb",
-        "completion-icon": "ansiyellow bold",
-        "completion-command": "#ffffff bold",
-        "table.header": "bold ansiwhite",
-        "table.total": "bold ansiyellow",
-        "picker.title": "bold ansiwhite",
-        "picker.subtitle": "ansiwhite italic",
-        "picker.pointer": "bold ansiyellow",
-        "picker.selected": "bold ansiyellow",
-        "picker.description": "ansiwhite",
-        "picker.hint": "ansiwhite italic",
-        "picker.query": "ansiwhite",
-        "todo.title": "bold #ffffff",
-        "todo.phase": "bold #ffffff",
-        "todo.completed": "fg:#7bd88f strike",
-        "todo.in_progress": "bold fg:#ffff00",
-        "todo.pending": "fg:#aaaaaa",
+        "fg": "ansiwhite", "bright": "#ffffff", "muted": "ansiwhite", "meta": "#bbbbbb", "dim": "ansiwhite",
+        "border": "ansiwhite", "surface": "default",
+        "accent": "ansiyellow", "prompt": "ansiwhite", "activity": "ansiyellow",
+        "success": "#7bd88f", "warning": "ansiyellow", "error": "ansired",
+        "c1": "ansicyan", "c2": "ansiyellow", "c3": "#ffffff", "c4": "#ffffff", "c5": "#ffff00", "c6": "#aaaaaa",
     },
     # 霓虹：品红/青色点缀，与默认同为深底。
     "neon": {
-        "prompt": "#ff6ec7 bold",
-        "status.logo": "#a8a6c4",
-        "status.model": "#7ef9ff",
-        "status.path": "#e1defa",
-        "status.git": "#ffd166",
-        "status.cost": "#f8dc8c",
-        "status.context": "#7ef9ff",
-        "status.sep": "#807caa",
-        "status.hint": "#a8a6c4 italic",
-        "status.activity": "#ff6ec7",
-        "completion-menu": "bg:default",
-        "completion-menu.completion": "bg:default #d8d8f0",
-        "completion-menu.completion.current": "bg:default bold #7ef9ff noreverse",
-        "completion-menu.meta.completion": "bg:default #8a8ab0",
-        "completion-menu.meta.completion.current": "bg:default bold #7ef9ff",
-        "completion-menu.multi-column-meta": "bg:default #8a8ab0",
-        "completion-icon": "#7ef9ff",
-        "completion-command": "#ffffff",
-        "table.header": "bold #8a8ab0",
-        "table.total": "bold #e1defa",
-        "picker.title": "bold #7ef9ff",
-        "picker.subtitle": "#a8a6c4 italic",
-        "picker.pointer": "bold #ff6ec7",
-        "picker.selected": "bold #7ef9ff",
-        "picker.description": "#a8a6c4",
-        "picker.hint": "#a8a6c4 italic",
-        "picker.query": "#e1defa",
-        "todo.title": "bold #7ef9ff",
-        "todo.phase": "bold #7ef9ff",
-        "todo.completed": "fg:#7bd88f strike",
-        "todo.in_progress": "bold fg:#ff6ec7",
-        "todo.pending": "fg:#8a8ab0",
+        "fg": "#e1defa", "bright": "#ffffff", "muted": "#a8a6c4", "meta": "#8a8ab0", "dim": "#a8a6c4",
+        "border": "#807caa", "surface": "default",
+        "accent": "#7ef9ff", "prompt": "#ff6ec7", "activity": "#ff6ec7",
+        "success": "#7bd88f", "warning": "#ffd166", "error": "#ff6b6b",
+        "c1": "#7ef9ff", "c2": "#f8dc8c", "c3": "#d8d8f0", "c4": "#7ef9ff", "c5": "#ff6ec7", "c6": "#8a8ab0",
     },
 }
+
+# 类名 → 样式模板（三主题共用）。
+CLASS_TEMPLATES = {
+    "prompt": "{prompt} bold",
+    "status.logo": "{dim}",
+    "status.model": "{accent}",
+    "status.path": "{fg}",
+    "status.git": "{warning}",
+    "status.cost": "{c2}",
+    "status.context": "{c1}",
+    "status.sep": "{border}",
+    "status.hint": "{muted} italic",
+    "status.activity": "{activity}",
+    "completion-menu": "bg:{surface}",
+    "completion-menu.completion": "bg:{surface} {c3}",
+    "completion-menu.completion.current": "bg:{surface} bold {accent} noreverse",
+    "completion-menu.meta.completion": "bg:{surface} {meta}",
+    "completion-menu.meta.completion.current": "bg:{surface} bold {accent}",
+    "completion-menu.multi-column-meta": "bg:{surface} {meta}",
+    "completion-icon": "{accent}",
+    "completion-command": "{bright}",
+    "table.header": "bold {meta}",
+    "table.total": "bold {fg}",
+    "picker.title": "bold {accent}",
+    "picker.subtitle": "{muted} italic",
+    "picker.pointer": "bold {accent}",
+    "picker.selected": "bold {accent}",
+    "picker.description": "{muted}",
+    "picker.hint": "{muted} italic",
+    "picker.query": "{fg}",
+    "todo.title": "bold {c4}",
+    "todo.phase": "bold {c4}",
+    "todo.completed": "fg:{success} strike",
+    "todo.in_progress": "bold fg:{c5}",
+    "todo.pending": "fg:{c6}",
+}
+
+# 个别主题对少数类的取舍与共用模板不同，在这里显式覆盖。
+THEME_CLASS_OVERRIDES = {
+    # 高对比：强调色加粗给模型名与图标，提示不斜体，表头用亮白、合计行用强调色、选择器标题用白。
+    "contrast": {
+        "status.model": "{accent} bold",
+        "status.hint": "{muted}",
+        "status.activity": "{activity} bold",
+        "completion-icon": "{accent} bold",
+        "completion-command": "{bright} bold",
+        "table.header": "bold {muted}",
+        "table.total": "bold {accent}",
+        "picker.title": "bold {fg}",
+    },
+    # 霓虹：选择器指针用品红，与提示符同色。
+    "neon": {
+        "picker.pointer": "bold {prompt}",
+    },
+}
+
+
+def _styles_for(name: str) -> Dict[str, str]:
+    tokens = THEME_TOKENS[name]
+    templates = {**CLASS_TEMPLATES, **THEME_CLASS_OVERRIDES.get(name, {})}
+    return {cls: template.format(**tokens) for cls, template in templates.items()}
+
+
+PT_STYLES = {name: _styles_for(name) for name in THEME_TOKENS}
 # 与 config.settings.UI_THEMES 保持一致（config 不 import cli）。
 assert set(PT_STYLES) >= {"default", "contrast", "neon"}
 PT_STYLE = PromptStyle.from_dict(PT_STYLES["default"])

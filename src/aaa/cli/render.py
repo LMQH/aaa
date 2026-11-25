@@ -7,11 +7,13 @@
 import difflib
 import io
 import re
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
+
+from .renderers import split_block
 
 RESET = "\x1b[0m"
 # C0（保留换行与制表）与 C1、CSI、OSC：模型/工具文本不得驱动终端。
@@ -168,6 +170,8 @@ class MarkdownStream:
         self._lines: List[str] = []
         self._pending = ""
         self._in_code = False
+        # 可选钩子：(围栏语言, 源码) -> 是否已接管展示；返回 True 时该块不再按 Markdown 渲染。
+        self.on_code_block: Optional[Callable[[str, str], bool]] = None
 
     def feed(self, delta: str) -> str:
         """返回本次可落地的 ANSI 文本；没有块边界时返回空串。"""
@@ -195,4 +199,8 @@ class MarkdownStream:
         self._lines = []
         if not block.strip():
             return ""
+        if self.on_code_block is not None:
+            split = split_block(block)
+            if split is not None and self.on_code_block(*split):
+                return ""
         return render_markdown(block, self.width, self.color)

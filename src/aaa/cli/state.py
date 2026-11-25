@@ -138,6 +138,10 @@ class AppState:
         )
         for name in mcp_failed:
             logging.getLogger(__name__).warning("MCP 插件连接失败：%s", name)
+        # 加载/连接失败必须在终端可见：只进日志的话，作者只会看到「静默没生效」。
+        failed = [*registry.disabled, *mcp_failed]
+        if failed:
+            project_note += f"加载失败 {len(failed)} 个：{'、'.join(failed)}（详见 ~/.aaa/logs/aaa.log）。"
         extra_tools = [*mcp_functions]
         extra_tools.extend(plugins.make_create_tools())
 

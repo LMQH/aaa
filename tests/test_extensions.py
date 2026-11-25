@@ -511,6 +511,36 @@ class CommandWiringTest(unittest.TestCase):
                 state.close_memory()
 
 
+class LoadFailureVisibilityTest(unittest.TestCase):
+    def test_failed_extensions_are_named_in_startup_note(self) -> None:
+        from fixtures import FakeModel, text
+
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (root / ".git").mkdir()
+        user_ext = root / "user_extensions"
+        _make_ext(user_ext, "good", COMMAND_EXT)
+        _make_ext(user_ext, "bad", BAD_EXT)
+        catalog = SimpleNamespace(
+            require=lambda *_: (None, SimpleNamespace(context_window=100_000)),
+            scope=lambda _: [], build=lambda *_: FakeModel([text("ok")]), fallbacks=lambda *_: [],
+        )
+        with mock.patch.object(plugins_mod, "EXTENSIONS_DIR_DEFAULT", user_ext), \
+             mock.patch("aaa.cli.state.from_config", return_value=catalog), \
+             mock.patch("aaa.cli.state.plugins.discover_mcp", return_value=[]), \
+             mock.patch("aaa.runtime.agent.DATA_DIR", root), \
+             mock.patch("aaa.runtime.agent.DB_FILE", root / "sessions.db"), \
+             contextlib.chdir(root), contextlib.redirect_stdout(io.StringIO()):
+            from aaa.cli.state import AppState
+            state = AppState.start({"default": {"provider": "p", "model": "m"}}, Settings())
+            try:
+                note = state.project_note
+            finally:
+                state.close_memory()
+        # 失败必须在启动摘要里点名，不能只进日志。
+        self.assertIn("加载失败 1 个：bad", note)
+        self.assertIn("编程式扩展 1 个：good", note)
+
+
 class SampleExtensionTest(unittest.TestCase):
     def test_shipped_example_loads_and_registers_all_mounts(self) -> None:
         example_root = Path(__file__).resolve().parents[1] / "docs" / "extending" / "examples"

@@ -57,21 +57,26 @@
 - **隔离强度**：文件工具与 `grep` 受工作区根约束并共用排除路径；相对路径按启动目录解析；shell 的工作目录是启动目录，只有审批，无路径约束。
 - **Team 任务依赖（上游）**：Agno 3.1.12 的 `execute_task` 完成后不自动刷新已阻塞的依赖。委派支持 `tasks`；领队在确认前置任务成功后，用 Agno 原生 `update_task_status` 刷新依赖。
 - **真实渠道覆盖**：P0 闭环与真实工具已通过 2026-11-24 的真实渠道验收；压缩与归档检索已在 2026-11-25 重跑（P1.7、P1.8 PASS）；内置记忆写入→新会话注入以 2026-11-23 为准，未重跑；miniviking BGE 语义检索真实端到端已通过；外部引擎经真实渠道的召回注入与 `cached_tokens` 上报仍未整体实测。
-- **物理终端**：`ESC[>4;2m` 的发出与还原、iTerm2 发出的 `ESC[27;2;13~` 与换行效果已在 PTY 实测；owner 已在本机 iTerm2 3.7.7 用物理 Shift+Enter 确认可用。macOS Terminal 不支持该协议，仍需终端侧映射。
+- **物理终端**：三处均已用 `scripts/terminal-probe.py` 实测。iTerm2：Shift+Enter `ESC[27;2;13~`、Alt+Enter `ESC[27;3;13~`、Ctrl+Enter `ESC[27;5;13~`、Shift+Tab `ESC[Z`，四者互不混淆，owner 另用物理按键确认换行生效。Terminal.app：不支持扩展键——Shift+Enter 与 Enter 同为 CR、Alt+Enter 为 `ESC`+CR、Ctrl+Enter 无任何字节（被终端吞掉），全程无 CSI u / modifyOtherKeys 序列；外部依据为 fsck.com 终端键盘协议综述（2026-02）与仓库两处笔记，反证源 terminfo.dev（2026-10）同页正文与表格自相矛盾，不采信。另在真实 Terminal.app 窗口里读过未改动的环境（2026-11-25）：`TERM_PROGRAM=Apple_Terminal`、`TERM=xterm-256color`、`COLORTERM=truecolor`，`supports_modified_keys()` 判为 False，白名单依据的环境变量名属实。本机 tmux 3.6a（2026-11-25，脚本模拟外层终端向 tmux 客户端写入 `ESC[27;2;13~`）：默认配置下窗格内只收到裸 `CR`；加上 `set -s extended-keys on` 与 `set -as terminal-features "xterm*:extkeys"` 后原样透传。Omarchy 主机（`thinkbook-omarchy`，tmux 3.8，owner 授权的只读检查）：`~/.config/tmux/tmux.conf` 已设 `extended-keys on` 与 `extended-keys-format csi-u`，外层特性只登记 `xterm-kitty:extkeys`；脚本模拟外层 iTerm2 向 tmux 写入 `ESC[27;2;13~` 或 `ESC[13;2u`，窗格内均收到 `ESC[13;2u`，`cli/key_input.py` 认该形式，兼容。外层为 `xterm-kitty` 时 tmux 起不来（远端没有该 terminfo），只影响从 Mac 以 `TERM=xterm-kitty` ssh 过去的场景。代码事实是 `supports_modified_keys` 用白名单（iTerm2/WezTerm/vscode/ghostty/Windows Terminal/tmux），不含 `Apple_Terminal`。aaa 现在在 tmux 内且未开启 `extended-keys` 时启动会提示怎么修（`key_input.tmux_extended_keys_hint`）。已知限制（只说明、不修）：经 ssh 直连远端时终端类型不随 ssh 传递，Shift+Enter 不可用，见 `docs/commands.md`。未覆盖：WezTerm、ghostty、VS Code、Warp、Windows Terminal 本机未安装（或需 Windows）；「iTerm2 + 本机 tmux」未在真机合测。
 - **发布**：发版门已就绪（`scripts/release.py` 人建 tag、手动 dispatch、`environment: release` 审批、草稿 Release）；尚未发版。PyPI/testPyPI 尚未实现。
-- **平台**：Windows 的 PowerShell 与后台任务分支未实跑。
+- **平台**：Windows 已修复并在 GitHub 的 Windows 机器上实测通过（2026-11-25，见「Windows 实测」节）：启动、中文输出、文件与命令工具、假模型对话、打包均正常；单测 447 项全过（跳过 9 项：后台任务按设计不支持、扩展键开关只在 POSIX 终端、用 `/bin/echo` 验证 PowerShell 参数传递等）。限制：后台任务（`background=true`）明确不支持，长命令用前台并依赖超时；真实终端里的按键未验证。
 - **首次发版**：尚未创建 tag/Release；`release.py tag` 的完整成功路径未跑（会创建真实 tag），早期检查与 pre-push 兜底已验证。
 
 ## 下一步
 
-按优先级排列；前两项方向已定，后四项是不急的既有欠账。
+按优先级排列。扩展协议五阶段已交付（见「当前验证证据」），终端呈现升级的方向已定（owner 2026-11-25 决断），其余为既有欠账。
 
-1. 扩展协议：边界已定（见 `docs/architecture.md`）。先定最小稳定面——事件订阅，注册工具、命令、提示词块、面板；接口一旦有人用就改不动，动工前先过一遍接口面。
-2. 终端呈现升级（择期讨论）：可选全屏模式、图片协议、鼠标、Mermaid 与公式渲染、组件库。
+1. 终端键位与全路径：本机可做的都已完成（见「物理终端」条与各验证节）。剩余——
+   a. SSH 直连远端时 Shift+Enter 不可用：终端类型（`TERM_PROGRAM`）不随 ssh 传递，远端的 aaa 认不出终端、不开启扩展键；套 tmux 不受影响。owner 2026-11-25 决定：不属于产品问题，只在 `docs/commands.md` 说明，不修。
+   b. 「iTerm2 + 本机 tmux」真机组合的 Shift+Enter：两端分别验证过，未在真机合测；本机 `~/.tmux.conf` 未配置，加 `set -s extended-keys on` 与 `set -as terminal-features "xterm*:extkeys"` 后即可试。
+   c. WezTerm、ghostty、VS Code、Warp、Windows Terminal：本机未安装或需 Windows，仅凭白名单放行，未真机验证。
+2. 终端呈现升级：图片协议、可插拔外部渲染器（Mermaid 与公式链均在真实工具上验收）、主题语义 token 均已交付，无剩余。按 owner 原则，渲染器默认不安装、渲染不是必需能力；打包策略后续另议。
 3. 首次正式发版：owner 确认版本 → `scripts/release.py tag` → 手动 dispatch + environment 审批 → 草稿发布。
 4. testPyPI 演练 → PyPI Trusted Publishing。
 5. 外部引擎（miniviking）真实召回与 `cached_tokens` 上报核实。
-6. 物理终端键位矩阵与单会话全路径贯通实测。
+6. Windows 收尾：`windows` 作业已并入 `ci.yml`，每次 push/PR 在 `windows-latest` 上跑启动、工具、假模型对话与打包，失败即变红；测试分支与其独立工作流已删除。剩余——
+   a. 真实终端按键（Shift+Enter、`Ctrl-J`、补全菜单）未验证：Windows 走 prompt_toolkit 的 Win32 输入，CI 无法模拟按键。
+   b. Windows Terminal / conhost 的界面呈现（ASCII 符号回退、状态行宽度）未真机走查。
 
 ## 当前验证证据
 
@@ -140,6 +145,57 @@
 - 未覆盖：面板在 PTY 真终端的渲染走查（逻辑有单测，未起 PTY）；提示词块真实模型下的行为；扩展间通信（未设计，留待真实需求）。
 - 证据位置：本节与 `tests/run.sh` 输出；代码未提交，含阶段 1–4 全部改动，提交需 owner 指令。
 
+### Windows 实测（2026-11-25）
+
+- 环境：GitHub Actions 的 `windows-latest`（Windows 10.0.26100，x64），uv 0.13.10，Python 3.13。摸底阶段跑在测试分支 `test/windows-ci` 的独立工作流上；修复后该作业已并入 `ci.yml`，测试分支已删除。仓库公开，运行免费；日志公开，全程只用假渠道与本地假模型。
+- 变更：四处修复——`cli/key_input.py` 的 VT100 输入类只在 POSIX 分支定义（Windows 上该模块导入即断言）；Windows 启动时把 stdout/stderr 重设为 UTF-8；`danger-full-access` 的锚点根下绝对路径先折算成根相对路径再交给 Agno（Windows 上带盘符的路径与其他盘符不再被判越界）；Windows 上按 Windows 规则拆 MCP 启动命令并以结构化参数交给 Agno（Agno 的 `command=` 走 POSIX 拆词）。信任指纹与描述统一用正斜杠；依赖平台符号、`pwd`、`/bin/echo` 与类 Unix 绝对路径的测试改用产品符号表、平台命令与自建目录，后台任务与扩展键开关测试在 Windows 按设计跳过。工作流新增重定向中文帮助探针与汇总步骤：任一探针或测试失败时任务变红。修复提交为 `cb7c02c`（main），Windows 作业并入 `ci.yml` 的提交为 `9ccd6b7`。
+- 命令与步骤：首版与修正版（`45571926465`、`45575349762`）用于摸底；修复后两次（`45579784195` 红、`45581571970` 绿）。每轮依次安装依赖、默认编码探针、单元测试（`python -m unittest discover`）、启动与工具直调（含 `--version`、重定向中文 `--help`、导入 `key_input`）、假模型下跑一轮对话、构建 wheel、汇总；日志作为产物 `windows-logs` 保留 14 天。
+- 预期依据：aaa 在 Windows 上应能启动、跑完一轮对话并使用工具；单测全过或按设计跳过。
+- 结果（最终 `45581571970`）：全部步骤成功。单测 `Ran 447 tests … OK (skipped=9)`；`--version`、重定向中文 `--help`、导入 `key_input` 均退出 0；全权限模式下相对路径与 `C:/Windows/win.ini` 都能读写，`list_files` 正常；后台任务返回「不支持 Windows」的明确提示；PowerShell 工具（pwsh 7.6.10）控制台编码 utf-8、中文输出正常；`trust.describe` 输出 `.aaa/skills/toy/SKILL.md`；假模型对话输出中文无编码异常；wheel 构建成功。摸底轮曾出现 25 项问题，逐条对应上面的修复或测试调整。
+- 未覆盖：真实终端里的按键（CI 无法模拟）；Windows Terminal / conhost 的界面呈现；npm/npx 一类 `.cmd` 启动的 MCP 服务（拆词与 `.cmd` 处理有代码路径，未实跑）。
+- 证据位置：GitHub 运行 `45581571970` 的日志与 `windows-logs` 产物；本节。
+
+### 公式链真实 TeX 验收、SSH 与 Omarchy tmux（2026-11-25）
+
+- 环境：macOS arm64，`.venv` Python 3.13；owner 授权本机安装组件做验证、连接 Omarchy 主机检查 tmux。TeX Live 2026（scheme-minimal + collection-latex + dvipng + standalone + preview）装在 `/tmp/aaa-texlive`（196MB，不进 PATH、不写 `$HOME`，从清华 CTAN 镜像安装共 86 秒）；`latex` 为 pdfTeX 1.40.29，`dvipng` 1.18。
+- 变更：修正公式包装——`standalone` 文档类把正文装进盒子，行间公式标记 `\[…\]` 在其中非法，原包装在真实 TeX 下报 `Missing $ inserted`、整条公式链失效；改为 `$\displaystyle …$`，并剥掉公式自带的外层行间标记。新增可选测试 `RealTexTest`（装有 `latex` 与 `dvipng` 才跑，否则跳过），以及包装形态与剥标记的单测。
+- 命令与步骤：`./tests/run.sh`；`PATH` 含 TeX 时单独跑 `tests.test_cli_renderers.RealTexTest`；端到端用本地假模型服务驱动真实 `python -m aaa`——先直接调渲染器，再在 REPL 里流式输出两个 `$$` 块，随后输出一个非法公式；打开产物 PNG 目视核对。
+- 预期依据：`src/aaa/cli/DESIGN.md`「可插拔外部渲染器」。
+- 结果：477 项 OK；ruff 全过。真实 TeX 下：直接渲染 `\frac{a}{b}+\sqrt{x^2+1}=\sum_{i=1}^{n}x_i` 得 260×76 PNG；REPL 内两个合法公式块出 2 张图（1KB、2KB），公式源码未回显，前后文字完好；非法公式回落为源码块且不出图。产物目视正确：分式、根号、带上下限的求和与 `E = mc²` 均无误。反向验证：把包装临时换回 `\[…\]`，真实 TeX 下渲染失败，说明 `RealTexTest` 能抓住这类退化。常规环境下 17 项渲染器测试 OK（`RealTexTest` 跳过）。
+- SSH 与 tmux：查到一个限制——ssh 默认不转发 `TERM_PROGRAM`（本机 sshd 的 `AcceptEnv` 只有 `LANG LC_*`），直连远端的 aaa 认不出终端、不会开启扩展键（套 tmux 不受影响）。owner 2026-11-25 决定：不属于产品问题，只在 `docs/commands.md` 说明，不修。本机 SSH 自连测试不做（owner 指示本机连本机不合适）；此前的一次尝试在认证处被拒，其临时 known_hosts 文件已删除。Omarchy 主机只读检查结果见「物理终端」条；测试用唯一临时会话名，未向远端写文件，结束后确认无 tmux 进程残留。
+- 未覆盖：「iTerm2 + tmux」真机组合；装在 `/tmp` 的 TeX 重启后消失，未验证重启后的行为（按设计未装即回落源码）。
+- 证据位置：本节与 `tests/run.sh` 输出；代码未提交，提交需 owner 指令。
+
+### 公式渲染链与单会话全路径走查（2026-11-25）
+
+- 环境：macOS arm64，`.venv` Python 3.13；owner 指示「剩下的也要做，继续推进」。公式链探查：本机无 latex/dvipng/tex2svg/mathjax/katex/ImageMagick/rsvg/matplotlib，仅有 node 与 mermaid-cli。
+- 变更：(1) 渲染器扩成多步流水线——`cli/renderers.py` 新增 `RenderStep`，`RendererSpec.steps` 为命令序列，`available()` 要求整条流水线命令齐全才注册；`render()` 逐步执行，任一步非零退出即停；缓存键改为「流水线 + 源码」。内置登记公式链 `math → latex → dvipng`（公式包成 `standalone` 最小文档）。(2) `split_block` 同时认带语言的代码围栏与 `$$…$$` 公式块，`MarkdownStream.on_code_block` 改用它；块内再含 `$$` 的散文不认。
+- 命令与步骤：`./tests/run.sh`；`tests/test_cli_renderers.py` 15 项（在原有 8 项上新增：`$$` 块进钩子并取到内层源码、公式链需两步命令齐全才注册、两步依次执行且源码被包成 TeX 文档、首步失败即停且末步不执行、`$$` 块单行与多行识别、含多个 `$$` 的散文与普通段落不误判）。单会话全路径走查：用本地假模型服务（按最后一条消息回文字、发 `run_shell_command` 工具调用、慢速流）驱动真实 `python -m aaa`（临时 HOME、伪终端 140 列、`TERM_PROGRAM=iTerm.app`），同一会话内依次执行 9 步，连跑两遍。
+- 预期依据：`src/aaa/cli/DESIGN.md`「可插拔外部渲染器」、`docs/commands.md` 键位表。
+- 结果：475 项 OK；ruff 全过。走查两遍均 9/9——启动进入 REPL；Shift+Enter 插入换行且模型请求数不变；多行括号粘贴不提交；普通一轮对话完成；`/mode workspace-write` 后工具调用先出审批面板、回车后执行出 `approval-ok` 并续跑完成；慢速流中按 Esc 取消本轮；`/help` 面板打开后 Esc 关闭、输入区回到面板下方；`/todos` 面板同上；窗口内双击 Ctrl-C 退出码 0 且写出扩展键还原序列。
+- 未覆盖：走查中的按键是向伪终端写入 iTerm2 会发的字节序列，不是 iTerm2 窗口里的物理按键；走查未覆盖 `/fork`、`/redo`、`/edit`、会话恢复与压缩触发。公式链当时只用假命令验证，真实 TeX 验收见上一节。
+- 证据位置：本节与 `tests/run.sh` 输出；走查脚本为一次性脚本，未入库；代码未提交，提交需 owner 指令。
+
+### 主题语义 token、加载失败可见、tmux 透传与提示（2026-11-25）
+
+- 环境：macOS arm64，`.venv` Python 3.13，tmux 3.6a；owner 指示「先改能够改的，推进剩下的」。
+- 变更：(1) 主题改为语义 token——`cli/ui.py` 用 `TOKENS`/`THEME_TOKENS`（19 个 token）+ `CLASS_TEMPLATES`（类名到样式模板）+ `THEME_CLASS_OVERRIDES`（contrast 8 项、neon 1 项显式覆盖）生成样式表，改配色只动 token，新增界面元素只加一行模板。(2) 扩展加载失败在终端可见——启动摘要点名加载失败的编程式扩展与连接失败的 MCP 插件。(3) tmux 键位提示——`key_input.tmux_extended_keys_hint` 在 tmux 内且 `extended-keys` 未开启时启动即提示怎么修；`docs/commands.md` 的 `Shift+Enter` 说明补上确切的两行配置。
+- 命令与步骤：`./tests/run.sh`；`tests/test_cli_theme_tokens.py` 3 项（三主题最终样式串与重构前字面量逐项相等、每主题定义全部 token、模板占位符均为已定义 token 且覆盖不指向不存在的类）；`tests/test_extensions.py` 的 `LoadFailureVisibilityTest`；`tests/test_cli_key_input.py` 的 `TmuxExtendedKeysHintTest` 4 项。tmux 两段端到端——(a) 脚本扮演外层终端，向 tmux 客户端的终端写入 `ESC[27;2;13~`，在默认配置与开启 `extended-keys` 两种配置下各跑一次探针，看窗格内收到的字节；(b) 在真实 tmux 会话里启动 aaa（临时 HOME + 本机假渠道），两种配置下各看一次启动输出是否出现修复提示。
+- 预期依据：`src/aaa/cli/DESIGN.md`、`docs/commands.md` 键位表、HANDOFF「物理终端」条。
+- 结果：468 项 OK；ruff 全过。(a) 默认配置窗格内收到裸 `CR`，开启后原样收到 `ESC[27;2;13~`；(b) 默认配置启动出现「tmux 未开启 extended-keys」提示，开启后不出现。主题重构由金标准测试确认界面零变化（测试先抓到两处偏差——contrast 表头 token 选错、neon 指针词序——修正后逐项相等）。
+- 未覆盖：tmux 透传用脚本模拟外层终端，证明的是 tmux 的转发配置成立，不是「iTerm2 + tmux」的真机组合；WezTerm、ghostty、VS Code、Windows Terminal、SSH 均未真机验证。
+- 证据位置：本节与 `tests/run.sh` 输出；代码未提交，提交需 owner 指令。
+
+### 终端内图片与外部渲染器（2026-11-25）
+
+- 环境：macOS arm64，`.venv` Python 3.13；iTerm2（`TERM_PROGRAM=iTerm.app`）；本机装有 mermaid-cli 11.16.0（`mmdc`）；端到端用临时 HOME + 指向本机假渠道/假模型服务的真实 `python -m aaa` 进程（不触真实模型）。
+- 变更：`src/aaa/cli/images.py`（环境变量探测、OSC 1337 与 kitty graphics 编码含分块、PNG/GIF/JPEG 尺寸解析、`[图片] 名称 WxH NKB` 文本降级、「整行即存在的图片路径」识别）；`ui.images`、`ui.image_max_kb`、`ui.external_renderers`、`ui.render_timeout` 进键表；`app.py` 三个入口——`/image` 本地预览、工具结果整行图片路径自动渲染、`MarkdownStream.on_code_block` 接管 Mermaid 围栏；`src/aaa/cli/renderers.py`（围栏语言 → 外部命令 → PNG 的规格表、`mmdc` 探测、按「命令 + 源码」哈希缓存、超时与失败返回空）；渲染在工作线程执行，成功出图，失败回落源码块。带转义序列的终端写入改走 `app.output.write_raw`。`docs/commands.md` 与 `cli/DESIGN.md` 同步。
+- 命令与步骤：`./tests/run.sh`；`tests/test_cli_images.py` 13 项与 `tests/test_cli_renderers.py` 8 项；PTY 端到端三段——(1) `/image` 一张 380KB 的 PNG，抓原始字节核对 OSC 1337 载荷与原文件逐字节一致、序列后紧跟换行与界面重绘；(2) 假模型流式输出合法 Mermaid 围栏，核对图片上屏且源码不再作为代码块回显、前后文字完好；(3) 假模型输出非法 Mermaid，核对回落为源码块且不出图。
+- 预期依据：`src/aaa/cli/DESIGN.md`「终端内图片」「可插拔外部渲染器」。
+- 结果：459 项 OK；ruff 全过；端到端 (1)(2)(3) 全部符合预期（合法图 10.9KB PNG，真 `mmdc` 单次渲染约 0.4 秒）。端到端过程中抓到并修复一个真缺陷：`output.write` 会把 `ESC` 换成 `?`，图片序列此前发到终端的是乱码。
+- 未覆盖：屏上像素观感未由人眼确认（字节流已核对）；kitty 协议未在 kitty/Ghostty 真机验证；tmux 内按设计直接降级未测透传；公式渲染无内置规格（接口已就绪，缺「一步产出 PNG」的常见命令）。
+- 证据位置：本节与 `tests/run.sh` 输出；代码未提交，提交需 owner 指令。
+
 ### 扩展生态收口：接口欠账、面板命名空间、作者文档（2026-11-25）
 
 - 环境：macOS arm64，`.venv` Python 3.13，agno 3.1.12。
@@ -147,7 +203,7 @@
 - 命令：`./tests/run.sh`；`tests/test_extensions.py` 30 项（新增：settings 只读/未知键默认/无 set、日志前缀、命令注册校验与同名拒绝、扩展命令与 md 命令合并且 md 优先、面板短名解析与跨扩展同名、示例扩展全挂载点加载）。
 - 预期依据：`src/aaa/extensions/DESIGN.md`、`docs/extending/extensions.md`。
 - 结果：420 项 OK；ruff 全过。
-- 未覆盖与边界：开发循环仍为「重启生效、无 /reload」；加载失败只进日志不在终端提示；示例扩展未在真实模型会话里跑（只验证装载与注册）。
+- 未覆盖与边界：开发循环仍为「重启生效、无 /reload」；示例扩展未在真实模型会话里跑（只验证装载与注册）。加载失败的终端提示在本节当时未做，已于 2026-11-25 补上（见「主题语义 token、加载失败可见、tmux 透传与提示」节）。
 - 证据位置：本节与 `tests/run.sh` 输出；代码未提交，提交需 owner 指令。
 
 ### 工具调用前钩子与审批第三档（2026-11-25）

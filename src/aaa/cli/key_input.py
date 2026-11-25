@@ -7,6 +7,7 @@
 """
 
 import os
+import subprocess
 import sys
 from contextlib import contextmanager
 from typing import Optional
@@ -68,6 +69,34 @@ def supports_modified_keys(env=None) -> bool:
         or term.startswith("tmux")
         or term == "xterm-ghostty"
     )
+
+
+def tmux_extended_keys_hint(env=None) -> Optional[str]:
+    """在 tmux 内且未开启 extended-keys 时返回一句修复提示；其余情况返回 None。
+
+    默认配置的 tmux 会把 Shift+Enter 压成普通回车：aaa 这边开启了扩展键也没有用，
+    用户只会看到「换行不灵」，所以在启动时点名告知怎么修。
+    """
+    env = os.environ if env is None else env
+    in_tmux = env.get("TMUX") and (
+        (env.get("TERM_PROGRAM") or "").strip() == "tmux"
+        or (env.get("TERM") or "").strip().lower().startswith("tmux")
+    )
+    if not in_tmux:
+        return None
+    try:
+        shown = subprocess.run(
+            ["tmux", "show-options", "-s", "extended-keys"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if shown.strip().endswith("off"):
+        return (
+            "tmux 未开启 extended-keys，Shift+Enter 暂不可用；在 ~/.tmux.conf 加入"
+            ' `set -s extended-keys on` 与 `set -as terminal-features "xterm*:extkeys"` 后重载。'
+        )
+    return None
 
 
 @contextmanager

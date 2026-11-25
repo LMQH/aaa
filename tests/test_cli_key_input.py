@@ -265,3 +265,43 @@ class ExtendedKeysToggleTest(unittest.TestCase):
             with extended_keys(stream) as enabled:
                 self.assertFalse(enabled)
         self.assertEqual(stream.written, '')
+
+
+class TmuxExtendedKeysHintTest(unittest.TestCase):
+    """默认配置的 tmux 把 Shift+Enter 压成回车：启动时点名提示怎么修。"""
+
+    _IN_TMUX = {'TMUX': '/tmp/tmux,1,0', 'TERM': 'tmux-256color'}
+
+    def test_off_in_tmux_gives_fix_hint(self):
+        from aaa.cli.key_input import tmux_extended_keys_hint
+
+        shown = mock.Mock(stdout='extended-keys off\n')
+        with mock.patch('aaa.cli.key_input.subprocess.run', return_value=shown) as run:
+            hint = tmux_extended_keys_hint(dict(self._IN_TMUX))
+        self.assertIsNotNone(hint)
+        self.assertIn('set -s extended-keys on', hint)
+        self.assertEqual(run.call_args.args[0], ['tmux', 'show-options', '-s', 'extended-keys'])
+
+    def test_on_in_tmux_is_silent(self):
+        from aaa.cli.key_input import tmux_extended_keys_hint
+
+        with mock.patch('aaa.cli.key_input.subprocess.run', return_value=mock.Mock(stdout='extended-keys on\n')):
+            self.assertIsNone(tmux_extended_keys_hint(dict(self._IN_TMUX)))
+
+    def test_outside_tmux_does_not_shell_out(self):
+        from aaa.cli.key_input import tmux_extended_keys_hint
+
+        with mock.patch('aaa.cli.key_input.subprocess.run') as run:
+            self.assertIsNone(tmux_extended_keys_hint({'TERM_PROGRAM': 'iTerm.app'}))
+            self.assertIsNone(tmux_extended_keys_hint({'TMUX': '/tmp/tmux,1,0', 'TERM_PROGRAM': 'iTerm.app'}))
+        run.assert_not_called()
+
+    def test_tmux_missing_or_failing_is_silent(self):
+        import subprocess
+
+        from aaa.cli.key_input import tmux_extended_keys_hint
+
+        with mock.patch('aaa.cli.key_input.subprocess.run', side_effect=OSError('no tmux')):
+            self.assertIsNone(tmux_extended_keys_hint(dict(self._IN_TMUX)))
+        with mock.patch('aaa.cli.key_input.subprocess.run', side_effect=subprocess.TimeoutExpired('tmux', 2)):
+            self.assertIsNone(tmux_extended_keys_hint(dict(self._IN_TMUX)))

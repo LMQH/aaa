@@ -20,7 +20,7 @@ echo "..." | PYTHONPATH=src python -m aaa --mode json
 | `Enter` | 空闲提交；运行中加入 FIFO 后续队列；已请求停止后提交的消息在运行确认取消后立即发送；补全菜单中先用 ↑↓ 选中才接受并执行命令名，参数与 `@` 文件只插入 |
 | `↑` / `↓` | 补全菜单打开时移动选择，不碰历史；否则浏览历史 |
 | `Tab` | 接受补全但不提交 |
-| `Shift+Enter` | 插入换行，不发送；iTerm2/WezTerm/ghostty/VS Code 由 CLI 自动开启修饰键上报（tmux 内需 `extended-keys`），无需配置；kitty 与 macOS Terminal 不支持，需自行映射为 `Esc`+`Enter` |
+| `Shift+Enter` | 插入换行，不发送；iTerm2/WezTerm/ghostty/VS Code 由 CLI 自动开启修饰键上报，无需配置。tmux 内默认会把 Shift+Enter 压成回车，需在 `~/.tmux.conf` 加 `set -s extended-keys on` 与 `set -as terminal-features "xterm*:extkeys"`（未配置时启动会提示）；kitty 与 macOS Terminal 不支持，需自行映射为 `Esc`+`Enter`。经 ssh 直连远端时终端类型不会传过去，Shift+Enter 不可用：改用 `Ctrl-J` 或 `Alt+Enter` 换行，或在远端套一层 tmux |
 | `Ctrl-J` / `Alt+Enter` | 兼容换行 |
 | `Esc` | 补全菜单打开时关闭；审批待决时拒绝；否则收起工具详情；运行中请求取消，草稿非空时改为打断并发送草稿 |
 | `Ctrl-C` | 清空草稿（Up 取回）；窗口期内再次按下退出；审批时草稿为空则拒绝 |
@@ -83,7 +83,7 @@ echo "..." | PYTHONPATH=src python -m aaa --mode json
 | `/redo` | 重新生成最后一轮已完成的回复 |
 | `/edit <新消息>` | 从上一条用户消息分叉重发，原轮保留 |
 | `/fork [轮次] [新消息]` | 回到某一轮之前：当前会话分叉成新会话并切过去，原句预填进草稿；带新消息则直接发送 |
-| `/image <路径>` | 发送本地图片 |
+| `/image <路径>` | 发送本地图片；支持的终端（iTerm2/WezTerm/kitty/Ghostty）里同时内联预览，其余终端打一行占位 |
 | `/plugin [名称]` | 查看或启停 MCP 插件与技能包（重启生效）；名称同时是插件名和包名时先匹配插件 |
 | `/skills` | 列出发现的技能，带来源与所属技能包 |
 | `/new` | 新建会话（旧会话仍可从 `/session` 找回） |
