@@ -73,8 +73,6 @@ def instructions_for(mode: str, tools: Collection[str], project_text: str = "") 
     if "run_powershell" in tools:
         parts.append(_builtin("powershell.md"))
     for name, triggers in SECTIONS:
-        if name == "jobs" and os.name == "nt":
-            continue  # Windows 上后台任务不可用
         if any(tool in tools for tool in triggers):
             parts.append(_prune(_builtin(f"{name}.md"), tools))
     return "\n\n".join(parts)

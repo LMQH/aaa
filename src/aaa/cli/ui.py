@@ -44,25 +44,24 @@ COMMANDS = [
     ("/exit", "退出"),
 ]
 
-# 符号表：Windows 控制台默认字体缺字较多，直接退回 ASCII；
-# macOS/Linux 使用最简线条符号，不依赖 Nerd Font。
-ASCII_UI = os.name == "nt"
+# 符号表：全平台共用同一套最简线条符号，不依赖 Nerd Font。
+# 终端字体缺字时由终端显示方框，不降级成 ASCII——多平台观感必须一致。
 GLYPH = {
-    "prompt": ">" if ASCII_UI else "❯",
-    "ok": "+" if ASCII_UI else "✔",
-    "fail": "x" if ASCII_UI else "✘",
-    "dot": "-" if ASCII_UI else "·",
-    "working": "~" if ASCII_UI else "⎋",
-    "bar": "-" if ASCII_UI else "─",
-    "mark": "|" if ASCII_UI else "╎",
-    "title": ">" if ASCII_UI else "▸",
-    "pointer": ">" if ASCII_UI else "❯",
-    "mode": ">" if ASCII_UI else "▶",
+    "prompt": "❯",
+    "ok": "✔",
+    "fail": "✘",
+    "dot": "·",
+    "working": "⎋",
+    "bar": "─",
+    "mark": "╎",
+    "title": "▸",
+    "pointer": "❯",
+    "mode": "▶",
 }
-EDITOR_PROMPT = "> " if ASCII_UI else "❯ "
+EDITOR_PROMPT = "❯ "
 
-# 命令图标：Windows 不显示图标，其余平台用最简符号。
-ICONS = {} if ASCII_UI else {
+# 命令图标：全平台一致。
+ICONS = {
     "/help": "?",
     "/config": "≡",
     "/provide": "⚙",
@@ -255,7 +254,7 @@ def editor_status(width, *, logo, model, cwd, git, cost, tokens, window, compact
     """按可见列排版一行状态；先压缩目录，再省略辅助信息。"""
     if width < 1:
         return []
-    sep = " > " if ASCII_UI else " › "
+    sep = " › "
     parts = {
         "logo": logo, "model": model, "path": cwd, "git": git.display() if git else "",
         "cost": f"${cost:.4f}" if cost is not None else "",
@@ -401,10 +400,7 @@ TODO_STYLES = {
     "in_progress": "class:todo.in_progress",
     "pending": "class:todo.pending",
 }
-TODO_MARKS = (
-    {"completed": "x", "in_progress": ">", "pending": "."} if ASCII_UI
-    else {"completed": "✔", "in_progress": "▶", "pending": "·"}
-)
+TODO_MARKS = {"completed": "✔", "in_progress": "▶", "pending": "·"}
 
 
 def todo_lines(todos, width: int) -> list:

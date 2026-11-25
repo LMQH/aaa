@@ -8,8 +8,8 @@ import io
 import json
 import os
 import re
-import signal
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -17,6 +17,7 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import List
 from unittest import mock
 
 from agno.agent import Agent
@@ -339,7 +340,22 @@ class ToolsTest(unittest.TestCase):
             self.assertIn(flag, output)
 
 
-@unittest.skipIf(os.name == "nt", "后台任务在 Windows 上不支持（设计）")
+def _process_alive(pid: int) -> bool:
+    """进程是否还活着；只用系统自带工具，避免引入依赖。"""
+    if os.name == "nt":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True
+        )
+        return str(pid) in result.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class ShellJobTest(unittest.TestCase):
     def setUp(self) -> None:
         self.work = Path(tempfile.mkdtemp(prefix="aaa-jobs-"))
@@ -348,11 +364,10 @@ class ShellJobTest(unittest.TestCase):
     def tearDown(self) -> None:
         for job in list(self.tools._jobs.values()):
             if job.process.poll() is None:
-                try:
-                    os.killpg(job.process.pid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+                self.tools.job_kill(job.id)
             job.process.wait(timeout=5)
+            if job.tree is not None:
+                job.tree.close()
         self.tools._jobs.clear()
 
     def _job_id(self, text_value: str) -> str:
@@ -369,30 +384,69 @@ class ShellJobTest(unittest.TestCase):
             time.sleep(0.1)
         self.fail(f"job {job_id} 未结束")
 
+    def _long_command(self, seconds: int = 30) -> List[str]:
+        return [sys.executable, "-c", f"import time; time.sleep({seconds})"]
+
     def test_background_job_reports_output_and_exit(self) -> None:
-        job_id = self._job_id(self.tools.run_shell_command(["echo", "job-ok"], background=True))
+        job_id = self._job_id(
+            self.tools.run_shell_command(
+                [sys.executable, "-c", "print('job-ok')"], background=True
+            )
+        )
         output = self._wait_finished(job_id)
         self.assertIn("exit 0", output)
         self.assertIn("job-ok", output)
 
         bad = self._job_id(
-            self.tools.run_shell_command(["sh", "-c", "echo bad >&2; exit 3"], background=True)
+            self.tools.run_shell_command(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stderr.write('bad\\n'); sys.exit(3)",
+                ],
+                background=True,
+            )
         )
         self.assertIn("exit 3", self._wait_finished(bad))
 
     def test_kill_and_illegal_id(self) -> None:
-        job_id = self._job_id(self.tools.run_shell_command(["sleep", "30"], background=True))
+        job_id = self._job_id(self.tools.run_shell_command(self._long_command(), background=True))
         self.assertIn("running", self.tools.job_output(job_id))
         self.assertIn("已终止", self.tools.job_kill(job_id))
         self.assertIn("finished", self._wait_finished(job_id))
         self.assertIn("未知 job id", self.tools.job_output("../etc"))
 
     def test_job_state_stays_in_process(self) -> None:
-        job_id = self._job_id(self.tools.run_shell_command(["sleep", "30"], background=True))
+        job_id = self._job_id(self.tools.run_shell_command(self._long_command(), background=True))
         self.assertIn("running", self.tools.job_output(job_id))
         # 后台任务不落盘：工作目录里没有 jobs/、meta.json、output.log。
         self.assertEqual(list(self.work.iterdir()), [])
         self.assertIn("已终止", self.tools.job_kill(job_id))
+
+    def test_job_kill_reaps_descendants(self) -> None:
+        """杀 job 必须带走它拉起的子进程：POSIX 靠进程组，Windows 靠 Job Object。"""
+        pid_file = self.work / "child.pid"
+        code = (
+            "import subprocess, sys, time\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+            f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+            "time.sleep(120)\n"
+        )
+        job_id = self._job_id(
+            self.tools.run_shell_command([sys.executable, "-c", code], background=True)
+        )
+        deadline = time.time() + 10
+        while time.time() < deadline and not pid_file.exists():
+            time.sleep(0.05)
+        self.assertTrue(pid_file.exists(), "子进程没起来")
+        child = int(pid_file.read_text())
+        self.assertTrue(_process_alive(child))
+        self.assertIn("已终止", self.tools.job_kill(job_id))
+        self.assertIn("finished", self._wait_finished(job_id))
+        deadline = time.time() + 10
+        while time.time() < deadline and _process_alive(child):
+            time.sleep(0.05)
+        self.assertFalse(_process_alive(child), f"子进程 {child} 仍活着")
 
 
 class SessionIndexTest(unittest.TestCase):
