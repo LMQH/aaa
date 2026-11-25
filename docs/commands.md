@@ -203,4 +203,4 @@ echo "..." | PYTHONPATH=src python -m aaa --mode json
 ## 平台
 
 - macOS 与 Linux：表中键位均经实测。
-- Windows：已实测可启动、跑完一轮对话、使用文件与命令工具；界面符号退回 ASCII（控制台默认字体缺字）。限制：后台任务（`background=true`）不支持，长命令用前台并依赖超时；真实终端里的按键未验证（CI 无法模拟按键），键位仍以 macOS 实测为准。
+- Windows：已实测可启动、跑完一轮对话、使用文件与命令工具、后台任务与打包；界面符号与图标与 macOS 一致，缺字时由终端字体决定显示。限制：真实终端里的按键未验证（CI 无法模拟按键），键位仍以 macOS 实测为准。后台任务停掉的是整棵进程树（Windows 用 Job Object，失败退回 `taskkill`）。

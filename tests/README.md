@@ -103,7 +103,7 @@ P2 实现在 `tests/pty_cases.py`，由 `e2e.py --pty` 导入。
 
 - `Catalog`：resolve 四态、scope、fallbacks。
 - `boundary`：三档能力/确认/隔离声明、`signature` 键序无关、`PolicySource` 替换后工具面变化。
-- `tools`：grep 注册与 `search_content` 退场、后台 job 生命周期（启动/轮询/退出码/终止/非法 id/状态不落盘）、PowerShell 条件装配与参数拼装。
+- `tools`：grep 注册与 `search_content` 退场、后台 job 生命周期（启动/轮询/退出码/终止/非法 id/状态不落盘/杀 job 带走子进程）、PowerShell 条件装配与参数拼装。
 - `sessions`：目录→会话索引（未知目录、覆盖推进、`seq` 单调）。
 - `config.settings`：默认值、类型/越界回落并告警、未知键忽略、不可解析文件、落盘回读。
 - `context.params`：阈值按 `max(W×(1-ratio), reserve)` 派生、最小为 1。
@@ -129,7 +129,7 @@ P2 实现在 `tests/pty_cases.py`，由 `e2e.py --pty` 导入。
 | `-c`（按目录续接） | 端到端无用例；`-c` 依赖的目录→会话索引仅有单测覆盖（P0.4 走 `-r`，不经过索引） |
 | 真实渠道记忆写入与注入 | 本轮只验证离线原生存取、CLI 与装配；真实模型主动记录及下一轮注入未实测 |
 | 多渠道路径歧义 | 已手工验证（`deepseek-flash` → `Ambiguous`），未入脚本以免重复成本 |
-| 长命令后台化 | 未实现，>120s 即杀进程组 |
+| 长命令自动后台化 | 未实现：超过 `tools.shell_timeout` 即终止整棵进程树，长任务需显式 `background=true`；Windows 上整树终止用 Job Object（CI 已覆盖子进程随 job 一起消失） |
 | 真实 TTY 键位矩阵 | Shift+Enter 的终端编码、Ctrl-C 双击、resize 目前只有单元/PTY 启动级证据；需在 iTerm/Terminal 实测 |
 | MCP 实测 | 按 owner 要求暂不实测；本地 toy 桥接用例保留但排除在常规验收命令之外 |
 | 横幅跨终端表现 | 动效已验收并默认启用；其他终端、字体和配色下的表现未逐一实测 |

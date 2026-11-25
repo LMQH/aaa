@@ -80,7 +80,9 @@ tools/
 - `weather`：wttr.in 纯文本接口，无 API Key、无额外依赖；任何异常都返回 `Error: …` 文本。
 - `todos`：状态存在 `run_context.session_state["todos"]`，随会话写库；条目形如 `{"text", "done"}`。
 - 子进程与信号只出现在 `builtin/processes.py` 与 `builtin/powershell.py` 两个文件；其他工具不允许直接 `subprocess`。`ProcessTools` 继承 Agno `ShellTools`，保持工具名 `run_shell_command` 以使 `requires_confirmation_tools` 生效。
-- 前台命令超时、输出上限、默认尾行由 `config.toml` 的 `tools.shell_*` 传入；POSIX 下以新 session 建进程组，超时用 `killpg(SIGKILL)` 回收整组，Windows 退回 `kill()`。
+- 前台命令超时、输出上限、默认尾行由 `config.toml` 的 `tools.shell_*` 传入。整树回收两端一致：POSIX 以新 session 建进程组、`killpg(SIGKILL)`；Windows 建独立进程组，超时与停止都用 Job Object（`KILL_ON_JOB_CLOSE`）终止整棵进程树，Job Object 建不起来时退回 `taskkill /T /F`。
+- 后台任务两端可用：每个 job 一个独立 Job Object（Windows）或独立进程组（POSIX），`job_kill`、超时与退出时回收都作用于整棵树，不留下孤儿进程。job 状态只活在当前进程，不落盘。
+- 子进程输出解码前后台一致：都按区域编码（`locale.getencoding()`）解码，后台按最后字节有界保留。
 - 输出超出上限时截断并加 `[output truncated]`；返回前按 `tail` 取末尾行。默认上限高于 Agno 卸载阈值，让超限结果以「信封 + 可回读全文」的形态进上下文。
 - 退出码非零时优先返回 stderr，其次 stdout，两者皆空时返回 `Error: exit code N`。
 - 后台 job id 必须是 8 位十六进制，直接用于路径拼接前先校验，防穿越。

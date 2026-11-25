@@ -111,7 +111,7 @@ todo_contract → 本包内无依赖（TODO 条目契约；tools 与 cli 共用�
 
 - `pyproject.toml` 声明直接依赖与 Python 版本范围，`uv.lock` 记录完整解析；`[tool.uv] constraint-dependencies` 约束传递依赖基线。安装与升级流程见 `AGENTS.md`。
 - Python 下限由 `import tomllib` 决定；上限表示未验证版本不被自动选中，实测基线为 3.13.12。
-- 锁保证解析结果与已验证环境逐包一致，不保证跨平台行为已验证；Windows 已有实测（GitHub `windows-latest`，含启动、工具、假模型对话与打包），真实终端按键与后台任务仍不在覆盖内，见 `tests/README.md`。
+- 锁保证解析结果与已验证环境逐包一致，不保证跨平台行为已验证；Windows 已有实测（GitHub `windows-latest`，含启动、工具、后台任务、假模型对话与打包），真实终端按键仍不在覆盖内，见 `tests/README.md`。
 
 ## 五、开发准则
 

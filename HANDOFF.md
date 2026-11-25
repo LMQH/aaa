@@ -26,7 +26,7 @@
 - `sessions/query`、`sessions/index` 与 `sessions/fork` — 会话查询、标题、目录→会话索引与会话分叉。
 - `todo_contract` — TODO 条目契约，tools 与 CLI 共用。
 - `plugins` — 命令模板、技能、MCP 插件的发现与启停；技能包由技能根的分组目录投射（`PACK.md` 描述、`.disabled` 停用）。
-- `cli/{args,app,state,run,ui,completer,commands,controller,render,diff,git_status,banner,key_input,tool_details}` — 入口、调度、渲染、输入适配、工具详情、事件与斜杠命令。
+- `cli/{args,app,state,run,ui,completer,commands,controller,render,renderers,images,report,settings_view,usage_stats,diff,git_status,banner,key_input,tool_details}` — 入口、调度、渲染（Markdown、终端图片、外部渲染器）、输入适配、设置视图、工具详情、事件与斜杠命令。
 - `cli/picker` — 自建选择器与单行输入：`❯` 强调色选中、无底色、输入筛选、Esc 逐级返回。
 - `cli/animations` — 启动动画插件：协议、发现与加载；默认 `default`，可选 `sharingan`。默认动画为 6 行块状 `A` 标识 + 半块 `AAA` 字标，版本贴末行，渐变旋转 + 高光扫过。
 
@@ -49,6 +49,7 @@
 - **会话分叉**：`/fork` 回到某一轮之前——当前会话整份复制成新会话，副本只保留目标轮次之前的轮次，原会话不动；同一会话内不做树状导航。
 - **打断并发出**：运行中草稿非空按 Esc，或取消后再提交消息，都登记为「停止后发送」；只在收到原生取消终态后发出，消息带打断前的请求、已发生的工具调用与新指示。
 - **非交互**：默认拒绝需确认的工具；`--allow-shell` 只放行 `run_shell_command`。
+- **`@文件`**：消息里的 `@路径` 在发送时附加内容——图片走图片通道，文本以 `<file>` 块拼进消息（10 万字符截断）；目录与读不了的路径保留原文并提示，补全逻辑不变。
 - **启动动画**：`cli/animations/*.py` 与 `~/.aaa/animations/*.py` 同名覆盖；模块导出 `ANIMATION`（函数即 `frames(ctx)`），宿主 `cli/banner.py` 负责调度与降级；`ui.banner_animation` 切换，下次启动生效。
 
 ## 待定 / 阻塞
@@ -58,25 +59,33 @@
 - **Team 任务依赖（上游）**：Agno 3.1.12 的 `execute_task` 完成后不自动刷新已阻塞的依赖。委派支持 `tasks`；领队在确认前置任务成功后，用 Agno 原生 `update_task_status` 刷新依赖。
 - **真实渠道覆盖**：P0 闭环与真实工具已通过 2026-11-24 的真实渠道验收；压缩与归档检索已在 2026-11-25 重跑（P1.7、P1.8 PASS）；内置记忆写入→新会话注入以 2026-11-23 为准，未重跑；miniviking BGE 语义检索真实端到端已通过；外部引擎经真实渠道的召回注入与 `cached_tokens` 上报仍未整体实测。
 - **物理终端**：三处均已用 `scripts/terminal-probe.py` 实测。iTerm2：Shift+Enter `ESC[27;2;13~`、Alt+Enter `ESC[27;3;13~`、Ctrl+Enter `ESC[27;5;13~`、Shift+Tab `ESC[Z`，四者互不混淆，owner 另用物理按键确认换行生效。Terminal.app：不支持扩展键——Shift+Enter 与 Enter 同为 CR、Alt+Enter 为 `ESC`+CR、Ctrl+Enter 无任何字节（被终端吞掉），全程无 CSI u / modifyOtherKeys 序列；外部依据为 fsck.com 终端键盘协议综述（2026-02）与仓库两处笔记，反证源 terminfo.dev（2026-10）同页正文与表格自相矛盾，不采信。另在真实 Terminal.app 窗口里读过未改动的环境（2026-11-25）：`TERM_PROGRAM=Apple_Terminal`、`TERM=xterm-256color`、`COLORTERM=truecolor`，`supports_modified_keys()` 判为 False，白名单依据的环境变量名属实。本机 tmux 3.6a（2026-11-25，脚本模拟外层终端向 tmux 客户端写入 `ESC[27;2;13~`）：默认配置下窗格内只收到裸 `CR`；加上 `set -s extended-keys on` 与 `set -as terminal-features "xterm*:extkeys"` 后原样透传。Omarchy 主机（`thinkbook-omarchy`，tmux 3.8，owner 授权的只读检查）：`~/.config/tmux/tmux.conf` 已设 `extended-keys on` 与 `extended-keys-format csi-u`，外层特性只登记 `xterm-kitty:extkeys`；脚本模拟外层 iTerm2 向 tmux 写入 `ESC[27;2;13~` 或 `ESC[13;2u`，窗格内均收到 `ESC[13;2u`，`cli/key_input.py` 认该形式，兼容。外层为 `xterm-kitty` 时 tmux 起不来（远端没有该 terminfo），只影响从 Mac 以 `TERM=xterm-kitty` ssh 过去的场景。代码事实是 `supports_modified_keys` 用白名单（iTerm2/WezTerm/vscode/ghostty/Windows Terminal/tmux），不含 `Apple_Terminal`。aaa 现在在 tmux 内且未开启 `extended-keys` 时启动会提示怎么修（`key_input.tmux_extended_keys_hint`）。已知限制（只说明、不修）：经 ssh 直连远端时终端类型不随 ssh 传递，Shift+Enter 不可用，见 `docs/commands.md`。未覆盖：WezTerm、ghostty、VS Code、Warp、Windows Terminal 本机未安装（或需 Windows）；「iTerm2 + 本机 tmux」未在真机合测。
-- **发布**：发版门已就绪（`scripts/release.py` 人建 tag、手动 dispatch、`environment: release` 审批、草稿 Release）；尚未发版。PyPI/testPyPI 尚未实现。
-- **平台**：Windows 已修复并在 GitHub 的 Windows 机器上实测通过（2026-11-25，见「Windows 实测」节）：启动、中文输出、文件与命令工具、假模型对话、打包均正常；单测 447 项全过（跳过 9 项：后台任务按设计不支持、扩展键开关只在 POSIX 终端、用 `/bin/echo` 验证 PowerShell 参数传递等）。限制：后台任务（`background=true`）明确不支持，长命令用前台并依赖超时；真实终端里的按键未验证。
-- **首次发版**：尚未创建 tag/Release；`release.py tag` 的完整成功路径未跑（会创建真实 tag），早期检查与 pre-push 兜底已验证。
+- **发布**：发版门已就绪（`scripts/release.py` 人建 tag、手动 dispatch、`environment: release` 审批、草稿 Release）；尚未发版，`release.py tag` 的完整成功路径未跑（会创建真实 tag），早期检查与 pre-push 兜底已验证。PyPI/testPyPI 通道未实现；发行名待定——`aaa` 在 PyPI 与 testPyPI 均已被占，候选 `amaterasu-agno-agent` 两边可用，owner 未拍板。
+- **平台**：Windows 已修复并在 GitHub 的 Windows 机器上实测通过（2026-11-25，见「Windows 实测」节）：启动、中文输出、文件与命令工具、后台任务、假模型对话、打包均正常；单测 486 项全过（跳过 15 项均为平台性限制：扩展键开关只在 POSIX 终端、`/bin/echo` 参数传递、shell 假渲染器、符号链接需权限）。界面符号与图标全平台统一，不再回退 ASCII。剩余项见「下一步」。
 
 ## 下一步
 
-按优先级排列。扩展协议五阶段已交付（见「当前验证证据」），终端呈现升级的方向已定（owner 2026-11-25 决断），其余为既有欠账。
+按优先级排列。扩展协议五阶段与终端呈现升级（图片协议、可插拔外部渲染器、主题语义 token）均已交付（见「当前验证证据」），其余为既有欠账。
 
 1. 终端键位与全路径：本机可做的都已完成（见「物理终端」条与各验证节）。剩余——
    a. SSH 直连远端时 Shift+Enter 不可用：终端类型（`TERM_PROGRAM`）不随 ssh 传递，远端的 aaa 认不出终端、不开启扩展键；套 tmux 不受影响。owner 2026-11-25 决定：不属于产品问题，只在 `docs/commands.md` 说明，不修。
    b. 「iTerm2 + 本机 tmux」真机组合的 Shift+Enter：两端分别验证过，未在真机合测；本机 `~/.tmux.conf` 未配置，加 `set -s extended-keys on` 与 `set -as terminal-features "xterm*:extkeys"` 后即可试。
    c. WezTerm、ghostty、VS Code、Warp、Windows Terminal：本机未安装或需 Windows，仅凭白名单放行，未真机验证。
-2. 终端呈现升级：图片协议、可插拔外部渲染器（Mermaid 与公式链均在真实工具上验收）、主题语义 token 均已交付，无剩余。按 owner 原则，渲染器默认不安装、渲染不是必需能力；打包策略后续另议。
-3. 首次正式发版：owner 确认版本 → `scripts/release.py tag` → 手动 dispatch + environment 审批 → 草稿发布。
-4. testPyPI 演练 → PyPI Trusted Publishing。
-5. 外部引擎（miniviking）真实召回与 `cached_tokens` 上报核实。
-6. Windows 收尾：`windows` 作业已并入 `ci.yml`，每次 push/PR 在 `windows-latest` 上跑启动、工具、假模型对话与打包，失败即变红；测试分支与其独立工作流已删除。剩余——
+2. 首次正式发版：owner 确认版本与发行名 → `scripts/release.py tag` → 手动 dispatch + environment 审批 → 草稿发布。
+3. testPyPI 演练 → PyPI Trusted Publishing。
+4. 外部引擎（miniviking）真实召回与 `cached_tokens` 上报核实。
+5. Windows 收尾：`windows` 作业已并入 `ci.yml`，每次 push/PR 在 `windows-latest` 上跑启动、工具、后台任务、假模型对话与打包，失败即变红；测试分支与其独立工作流已删除。剩余——
    a. 真实终端按键（Shift+Enter、`Ctrl-J`、补全菜单）未验证：Windows 走 prompt_toolkit 的 Win32 输入，CI 无法模拟按键。
-   b. Windows Terminal / conhost 的界面呈现（ASCII 符号回退、状态行宽度）未真机走查。
+   b. Windows Terminal / conhost 的界面呈现（统一符号在缺字字体下的样子、状态行宽度）未真机走查。
+   c. 子进程输出编码按区域编码解码，与前台一致；若某个外部程序输出与系统代码页不同（例如强制 UTF-8 的老工具），仍可能乱码——需要按程序指定编码时再议。
+
+## 待办方向（owner 2026-11-25 列入）
+
+四项大方向，均未拆解；每项动工前先出方案（边界、契约、验收），不直接实施：
+
+1. 补齐算力模型渠道协议：`model/provider.py` 现只映射 `deepseek` 与 `openai-completions` 两种协议；缺哪些协议、渠道字段与模型探测面补到什么程度，待拆。
+2. 增强工具能力：在现有能力集合（文件、检索、shell、PowerShell、后台任务、任务清单、委派、MCP、技能）之外按真实需求补工具，清单待定。
+3. 完善内置技能：`builtin_skills` 现有 create-agent、create-extension、create-team、create-workflow 四个，按使用场景补齐，范围待拆。
+4. 设计对齐产品的语义：产品语义先行，架构与模块 `DESIGN.md` 按产品语义逐条复核对齐，范围待拆。
 
 ## 当前验证证据
 
@@ -125,26 +134,6 @@
 - 变更附带影响：分类目录 `<分类>/<技能名>/SKILL.md` 不再被发现（Agno 只扫一层，静默丢弃）；技能索引体积从约 6,946 tokens 增至 12,306 tokens（索引现列出引用与脚本清单），每轮随系统消息发送。
 - 独立 QA（`QaSkillMigration`，43m20s，只读；受审修订 HEAD `943e313` + 工作区 diff）：主流程验收 1–4 通过（353 项 OK、真实装配 94 个技能且来源/覆盖方向正确、三工具正文与引用逐份比对一致、越界路径被拒、系统提示含 `<skills_system>` 且无正文泄漏）；发现并推动修复 `uv build --wheel` 直构失败（符号链接 + force-include 双份写入，R2 打包配置复核通过）；缺陷 D3–D8（miniviking 文档残留、来源标签按目录名而非 frontmatter 名、四处「纯文本不执行」过期表述、畸形 frontmatter 使 `/skills` 抛异常、DESIGN/HANDOFF 旧签名）当轮已全部修复并补 D4/D6 回归测试；D1（技能脚本执行绕过权限模式与 `--allow-shell`，含未信任仓库的 `.aaa/skills` 脚本）待 owner 决定。防假测试 11 处改错抓到 6 处；`/insight` 接线与排序等 5 处测试缺口未补。证据目录 `/tmp/aaa_qa_skills.Ba3e2a/`。
 
-### 扩展协议阶段 1：协议内核（2026-11-24）
-
-- 环境：macOS arm64，`.venv` Python 3.13，agno 3.1.12；接口面经 owner 审定（本会话），三个开放点按默认（9 事件目录、状态栏面板留阶段 4、提示词块 `system_tail` 留阶段 3）。
-- 变更：新增 `src/aaa/extensions/`（`protocol.py` 接口句柄与 9 事件目录、`bus.py` 事件总线（异常隔离、单扩展 3 次失败会话内挂起）、`loader.py`（`extension.toml [extension] kind="python"` 发现、`activate(ctx)` 激活、`PROTOCOL_VERSION` 校验、失败只禁用本扩展）、`DESIGN.md`）；`boundary.is_external_tool` 纳入 `ext_` 前缀（外部信任面：每次询问、审批策略不自动放行）；`runtime.build_agent(extensions=…)` 按模式装配扩展工具并挂 run 前后钩子（`run.started`/`message.user` 轮前，`tool.*`/`message.assistant`/`run.completed` 轮末回放）；`cli/run.py` 失败路径发 `run.failed`（取消不算失败）；`cli/state.py` 发现/信任门控/加载，`trusted` 参数与 MCP 共用 `extensions` 类别。
-- 命令：`./tests/run.sh`；`tests/test_extensions.py` 11 项（发现/去重、失败隔离、模式裁剪、外部信任分类、总线挂起、Agent 请求内工具按模式出现、run 生命周期事件落盘）。
-- 预期依据：`src/aaa/extensions/DESIGN.md`、`docs/architecture.md`「扩展协议」节。
-- 结果：399 项 OK；ruff 全过；read-only 下仅 `read` 能力与 `read_safe` 扩展工具在列，workspace-write 全量在列且 `requires_confirmation=True`，danger-full-access 下 `confirm="mode"` 免确认；加载失败的扩展被禁用且不影响其他扩展；事件 handler 连续 3 次异常挂起整个扩展。
-- 未覆盖：真实 HITL 审批流对 `ext_` 工具的端到端（走既有 `is_external_tool` 分支，未单测）；`/plugin` 对编程扩展的启停显示；阶段 2–4 未实施——阶段 2 触碰并行工作线热区（`app.py`/`controller.py`），排队等其提交。
-- 证据位置：本节与 `tests/run.sh` 输出；代码未提交（含并行线改动的工作区，提交需 owner 指令）。
-
-### 扩展协议阶段 2–4：归一、提示词块、面板（2026-11-25）
-
-- 环境：macOS arm64，`.venv` Python 3.13，agno 3.1.12；并行线（会话分叉/提示词拆分/命令工作目录）已提交（`cc45997`），本节改动叠于其上。
-- 变更：阶段 2——`plugins.discover_extensions` 统一发现入口（命令/技能/MCP/编程扩展/动画目录一次扫描 + 信任门控），`AppState.start` 只消费发现结果；阶段 3——`register_prompt_block`（`system_tail`）→ `registry.render_blocks(mode, cap)` 以 `<extension_block source="…">` 包裹追加系统消息尾部，单块字符上限 `project.instructions_max_chars`（0 关闭），`/insight` 基础提示词段计入并标注；阶段 4——`register_panel`（面板名全局唯一，重复注册触发加载失败禁用）+ `/panel` 命令（列出/`<名>`/off）+ 状态栏上方插槽（活动面板渲染至多 8 行，异常降级提示行）。
-- 命令：`./tests/run.sh`；`tests/test_extensions.py` 18 项（含面板重复名、activate/off、状态视图渲染、`/panel` 命令、块渲染/截断/0 关闭）与 `tests/test_project_extensions.py` 统一发现门控测试。
-- 预期依据：`src/aaa/extensions/DESIGN.md`（四阶段全实现）、`docs/architecture.md`「扩展协议」节。
-- 结果：407 项 OK；ruff 全过；统一发现未信任时项目技能/扩展/动画全部缺席、信任后齐备；提示词块进系统消息尾部并被 `/insight` 计入；面板名重复触发加载失败禁用；`/panel` 列表/打开/关闭语义正确。
-- 未覆盖：面板在 PTY 真终端的渲染走查（逻辑有单测，未起 PTY）；提示词块真实模型下的行为；扩展间通信（未设计，留待真实需求）。
-- 证据位置：本节与 `tests/run.sh` 输出；代码未提交，含阶段 1–4 全部改动，提交需 owner 指令。
-
 ### Windows 实测（2026-11-25）
 
 - 环境：GitHub Actions 的 `windows-latest`（Windows 10.0.26100，x64），uv 0.13.10，Python 3.13。摸底阶段跑在测试分支 `test/windows-ci` 的独立工作流上；修复后该作业已并入 `ci.yml`，测试分支已删除。仓库公开，运行免费；日志公开，全程只用假渠道与本地假模型。
@@ -154,6 +143,16 @@
 - 结果（最终 `45581571970`）：全部步骤成功。单测 `Ran 447 tests … OK (skipped=9)`；`--version`、重定向中文 `--help`、导入 `key_input` 均退出 0；全权限模式下相对路径与 `C:/Windows/win.ini` 都能读写，`list_files` 正常；后台任务返回「不支持 Windows」的明确提示；PowerShell 工具（pwsh 7.6.10）控制台编码 utf-8、中文输出正常；`trust.describe` 输出 `.aaa/skills/toy/SKILL.md`；假模型对话输出中文无编码异常；wheel 构建成功。摸底轮曾出现 25 项问题，逐条对应上面的修复或测试调整。
 - 未覆盖：真实终端里的按键（CI 无法模拟）；Windows Terminal / conhost 的界面呈现；npm/npx 一类 `.cmd` 启动的 MCP 服务（拆词与 `.cmd` 处理有代码路径，未实跑）。
 - 证据位置：GitHub 运行 `45581571970` 的日志与 `windows-logs` 产物；本节。
+
+### Windows 能力对齐：后台任务、整树终止与符号统一（2026-11-25）
+
+- 环境：macOS arm64（本地 POSIX 回归）与 GitHub Actions `windows-latest`；uv 0.13.10，Python 3.13；分支 `feat/windows-parity`，合并后删除。
+- 变更：Windows 上启用后台任务——每个 job 一个 Job Object（`KILL_ON_JOB_CLOSE`），`job_kill`、前台超时与退出回收都作用于整棵进程树，Job Object 建不起来时退回 `taskkill /T /F`；子进程输出前后台统一按区域编码解码；提示词不再在 Windows 隐藏后台任务段，工具注册、提示词与错误信息口径一致；界面符号与命令图标全平台统一，去掉 ASCII 回退。
+- 命令与步骤：本地 `./tests/run.sh` 全量；CI 跑 `ci.yml` 的 `windows` 作业（启动、工具直调含后台任务探针、假模型对话、打包、汇总）。新增用例「杀 job 带走子进程」两端都跑：POSIX 用 `kill(pid,0)` 复核，Windows 用 `tasklist` 复核。
+- 预期依据：`src/aaa/tools/DESIGN.md`（整树回收与解码一致）、`docs/commands.md`「平台」。
+- 结果：分支运行 `45591569357` 四个作业全绿；Windows 单测 `Ran 486 tests … OK (skipped=15)`，工具直调里后台任务返回 `job … started` 而非拒绝；POSIX 本地 486 项通过。
+- 未覆盖：Windows 真实终端按键与界面观感；外部程序输出编码与系统代码页不一致时的乱码。
+- 证据位置：GitHub 运行 `45591569357` 与 `windows-logs` 产物；本节。
 
 ### 公式链真实 TeX 验收、SSH 与 Omarchy tmux（2026-11-25）
 
@@ -203,7 +202,7 @@
 - 命令：`./tests/run.sh`；`tests/test_extensions.py` 30 项（新增：settings 只读/未知键默认/无 set、日志前缀、命令注册校验与同名拒绝、扩展命令与 md 命令合并且 md 优先、面板短名解析与跨扩展同名、示例扩展全挂载点加载）。
 - 预期依据：`src/aaa/extensions/DESIGN.md`、`docs/extending/extensions.md`。
 - 结果：420 项 OK；ruff 全过。
-- 未覆盖与边界：开发循环仍为「重启生效、无 /reload」；示例扩展未在真实模型会话里跑（只验证装载与注册）。加载失败的终端提示在本节当时未做，已于 2026-11-25 补上（见「主题语义 token、加载失败可见、tmux 透传与提示」节）。
+- 未覆盖与边界：开发循环仍为「重启生效、无 /reload」；示例扩展未在真实模型会话里跑（只验证装载与注册）。加载失败的终端提示在本节当时未做，已于 2026-11-25 补上（见「主题语义 token、加载失败可见、tmux 透传与提示」节）。前四阶段的遗留未覆盖并入本条：`ext_` 工具走真实 HITL 审批流未端到端测过；`/plugin` 不显示编程扩展的启停；面板逻辑有单测但未起 PTY 走查；提示词块在真实模型下的行为未测；扩展间通信未设计（留待真实需求）。
 - 证据位置：本节与 `tests/run.sh` 输出；代码未提交，提交需 owner 指令。
 
 ### 工具调用前钩子与审批第三档（2026-11-25）
@@ -222,76 +221,4 @@
 - GitHub：`main-protection` / `release-tags` ruleset active，bypass 仅 `LMQH`；`release` environment required reviewer `LMQH`、`can_admins_bypass=false`、部署分支 `main`/`v*`；Actions 默认只读；secret scanning、push protection、Dependabot alerts/security updates 已开启。
 - 开发入口：`scripts/aaa-dev.sh` 从 `/tmp` 与 `pi` 目录执行 `--version` 均为 `aaa 0.0.0+dev`；本机 wrapper 为 `~/.local/bin/aaa-dev`。
 
-### 工具门控（2026-11-24）
 
-- `uvx ruff==0.17.6 check` → All checks passed。
-- `./tests/run.sh` → 294 项 OK，8.509 秒。
-- `scripts/check_secrets.sh` 与 `--all-history` → 0。
-- `pip-audit`（`--all-extras`，忽略 `PYSEC-2026-2447`）→ No known vulnerabilities found, 2 ignored；`diskcache` 仅经 `llama-cpp-python` 的 embedding extra 传递，缓存目录必须用户私有。
-- pre-commit 反假：`secret.yaml`、`sk-...`、`uv.lock` 被拒；`AAA_ALLOW_LOCKFILE_CHANGE=1`、`.env.example`、白名单占位符放行；`.py` lint 失败被拒。
-- pre-push：分支推送通过；裸 `v*` tag 拒绝；带 `AAA_ALLOW_TAG_PUSH` 放行。
-- `install.sh`：正常 wheel `: OK`；篡改后校验失败并退出 1。
-- `scripts/release.py`：编译/`--help` 通过；非法版本与脏树 preflight 拒绝；未创建真实 tag。
-
-### 真实渠道（2026-11-23，最近一次；2026-11-24 未重跑）
-
-- P0 11/11，P1 2/2，内置记忆写入→新会话注入通过（`tokenhub/deepseek-flash`，临时 HOME，保留 HTTPS 代理）。未测外部引擎真实召回与 `cached_tokens`。
-
-### CLI 交互对齐（2026-11-24）
-
-- 环境：macOS arm64，`.venv` Python 3.13，HEAD `ecff336` + 本轮工作区改动；PTY 120×40 / 100×30，`TERM=xterm-256color`、`COLORTERM=truecolor`，测试进程显式移除本机 `NO_COLOR=1`。
-- 命令与步骤：`./tests/run.sh`；PTY 中依次执行 `/config start`、`/config` → `ui` → `banner_animation`、`/confi` + ↑ + Enter、`abc` + `ESC CR` + `def` + Ctrl-C、`/mode workspace-write` + 请求 `echo approval-ok`。
-- 预期依据：`src/aaa/cli/DESIGN.md` 二、三节与本轮交互契约。
-- 结果：单测 307 项 OK；默认横幅输出 α/`▄▀▀▄` 真彩渐变；`/config start` 弹出 `❯ default / sharingan` 且无 `48;` / `40m` 背景 SGR；Esc 从动画选择、配置键、配置组逐级返回；↑ 在补全菜单内移动并执行 `/config`；`ESC CR` 插入换行且未提交；审批无需 F2，等待 500ms 后 Enter 放行并得到 `approval-ok`；选择 sharingan 后 `config.toml` 写入 `banner_animation = "sharingan"`。
-- 证据位置：本轮 PTY 转录（`run_shell_command 0.0s · approval-ok`、`已清空草稿；按 Up 取回`）与 `tests/run.sh` 输出；未覆盖物理终端 Shift+Enter 编码与 Windows。
-- 独立 QA（`QaFinal`，2m11s，仅读）：307 项 OK；横幅、`↑` 补全、`/config start` 无底色、嵌套 Esc、`ESC CR` 换行 A–E 全部 PASS。审批项未独立复现（按约定跳过真实模型调用），保留主 Agent 的 PTY 证据。
-- 独立代码审查（`ReviewCliDiff`）：首轮 4 项中等缺陷已修复；delta 复核 **approve**，无阻塞项。
-
-### 修饰键协议（2026-11-24）
-
-- 环境：macOS arm64，`.venv` Python 3.13；PTY 100×30，`TERM_PROGRAM=iTerm.app`、`TERM=xterm-256color`，临时 `HOME` 与指向 `127.0.0.1:9` 的假渠道。
-- 命令与步骤：`./tests/run.sh`；`python -m aaa` 在 PTY 中启动后输入 `hello` + `ESC[27;2;13~` + `world` + 一次 Ctrl-C，再两次 Ctrl-C 退出。
-- 预期依据：`src/aaa/cli/DESIGN.md` 三节「修饰键协议」。
-- 结果：326 项 OK；启动后输出 `ESC[>4;2m`；Shift+Enter 序列未提交、草稿保留（Ctrl-C 回显 `已清空草稿；按 Up 取回`）；退出输出 `ESC[>4m`，退出码 0。owner 在本机 iTerm2 3.7.7 用物理 Shift+Enter 确认换行生效（2026-11-24）。
-- 独立审查（`ReviewKeyProtocol`，13m49s，只读）：1 High + 4 Medium + 4 Low。已修并补测试：审批待决时 Shift+Enter 会误批准/误发送（新增 `approval_enter` 并校验 `KeyPress.data`）、Backspace 码 8 与 Alt 前缀、Ctrl+`[`/Ctrl+3 等 Esc 别名被吞、Super 组合被改写成普通字符、畸形 CSI-u 泄漏成字面文本、Ctrl+Shift+Tab 误切权限模式、Esc 与回车跨读取被融合、kitty 误列入支持名单。delta 复审未重跑。
-- 证据位置：本轮 PTY 转录、owner 现场确认与 `tests/run.sh` 输出；未覆盖 Windows 与 macOS Terminal。
-
-### 启动横幅改版（2026-11-24）
-
-- 环境：macOS arm64，`.venv` Python 3.13；PTY 100×30，`TERM=xterm-256color`、`COLORTERM=truecolor`，测试进程移除本机 `NO_COLOR`，临时 `HOME` 与指向 `127.0.0.1:9` 的假渠道。
-- 命令与步骤：`./tests/run.sh`；`python -m aaa` 启动后截取前 6 秒输出，核对首帧与重绘次数。
-- 预期依据：`src/aaa/cli/DESIGN.md` 二节「默认动画」。
-- 结果：327 项 OK；横幅改为 6 行块状 `A` + 前 3 行 `AAA` 字标，版本贴末行，项目全称移除；只有标识走真彩渐变，按 12×6 格子跨满整条渐变；静止帧不取模，右下三块连续收在青 `(0,219,228)` 而不是跳回品红；字标为加粗终端前景色（深色主题下即白色），与 omp 的 `text` token 一致；最小尺寸由 40×12 降到 30×7。
-- 证据位置：本轮 PTY 转录与 `tests/run.sh` 输出；未覆盖 Windows、macOS Terminal 与 256 色降级。
-
-### 补全菜单与输入区对齐（2026-11-24）
-
-- 环境：macOS arm64，`.venv` Python 3.13；tmux 3.6a 110×34 真实终端，`TERM=screen-256color`，临时 `HOME` 与指向 `127.0.0.1:9` 的假渠道，测试进程去掉本机 `NO_COLOR`。
-- 命令与步骤：`./tests/run.sh`；tmux 中启动 `python -m aaa`，输入 `/c` 后分别截屏，再按 `↓` 截屏。
-- 预期依据：`src/aaa/cli/DESIGN.md` 二节「状态条与正文」与三节「行内补全菜单自建渲染」。
-- 结果：331 项 OK；输入行改为 `❯` 箭头；补全菜单选中行有 `❯` 指针、加粗的强调色前景（显式 `noreverse`，无背景块）；命令列对齐、描述列起点一致、最右一列 `█`/`│` 滚动条，prompt_toolkit 自带浮层不再出现；状态行固定显示 `▶ 模式` 与上下文进度条（未测量时 0%）；输入区颜色由 256 色提升到真彩（PTY 实测 3358 个 `38;2`、0 个 `38;5`）。
-- 证据位置：本轮 tmux 截屏与 `tests/run.sh` 输出；未覆盖 Windows、16 色终端与 resize 后的菜单重排。
-
-### 项目扩展信任交互（2026-11-24）
-
-- 环境：macOS arm64，`.venv` Python 3.13；tmux 3.6a 110×34；临时 `HOME` 与临时仓库（含 `.aaa/animations/glow.py`、`.aaa/extensions/toy/extension.toml`）。
-- 命令与步骤：`./tests/run.sh`；在该仓库启动 `python -m aaa`，确认单次合并询问后选「始终信任此仓库」，`/trust` 截屏，再重启截屏核对是否重复询问。
-- 预期依据：`src/aaa/trust.py` 模块说明与 `docs/commands.md` 的 `--trust-repo`。
-- 结果：336 项 OK；首次启动只问一次并同时列出启动动画与 MCP 扩展；选「始终」后 `repos.json` 记录 `"*"`，`/trust` 显示「已信任（始终）」；重启不再询问。
-- 证据位置：本次 tmux 截屏与 `tests/run.sh` 输出；`--trust-repo` 只有单测覆盖，未实机调用。
-
-### 只读报告面板（2026-11-24）
-
-- 环境：macOS arm64，tmux 3.6a 110×30；临时 `HOME` 与含项目扩展的临时仓库。
-- 命令与步骤：`./tests/run.sh`；启动 `python -m aaa` 后执行 `/trust` 截屏，`Esc` 关闭再截屏，随后执行 `/help` 截屏。
-- 预期依据：`src/aaa/cli/DESIGN.md` 三节「只读报告进全屏面板」。
-- 结果：340 项 OK；`/trust`、`/insight`、`/usage` 均为对齐表（表头 `table.header`、合计行 `table.total`，数值右对齐，缺价 `—`，无 `----` 分隔线）；`/todos` 按状态着色，`/skills` 名称与说明分行、说明暗色，`/help` 带图标与对齐命令列；`Esc` 关闭面板后回到输入区，内容不留在滚动历史。
-- 证据位置：本次 tmux 截屏与 `tests/run.sh` 输出；未覆盖 resize 与极窄终端。
-
-### 页签式设置面板（2026-11-24）
-
-- 环境：macOS arm64，tmux 3.6a 110×30；临时 `HOME`（`config.toml` 可写）。
-- 命令与步骤：`./tests/run.sh`；`/config` 打开面板，`↓` 选到 `ui.banner_enabled` 按 `⏎` 切换，`↓` 选到 `logo` 按 `⏎` 内联输入追加字符再 `⏎` 提交，`⇥` 跳分组，`→` 切到模型页，输入 `banner` 搜索，`Esc` 两次退出；随后检查 `config.toml`。
-- 预期依据：`src/aaa/cli/DESIGN.md` 三节「`/config` 是页签式设置面板」。
-- 结果：352 项 OK；10 个页签按域分三段（`·` 与 `│`），外观与记忆页左侧用竖条标出分组范围、组名对齐首行、组间空行分隔，键名暗/值亮、值列紧随名称列；`⏎` 切换与内联输入都即时落盘（`banner_enabled = false`、`logo = αZ`）；搜索显示「搜索 · banner · 4 项」并跨页分组；`Esc` 先清搜索再关闭；状态行预览只在外观页出现。
-- 证据位置：本次 tmux 截屏与 `tests/run.sh` 输出；内联输入当前只支持追加与退格（方向键不移动光标），未覆盖 resize、极窄终端与鼠标。
