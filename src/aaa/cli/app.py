@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -168,6 +169,54 @@ def load_images(paths: List[str]) -> Optional[List]:
     return out or None
 
 
+AT_FILE_TOKEN = re.compile(r'(?<!\S)@(?:"([^"\n]+)"|([^\s"@]+))')
+AT_FILE_CHAR_CAP = 100_000
+
+
+def expand_at_files(text: str) -> tuple[str, Optional[List], List[str]]:
+    """把消息里的 `@路径` 换成真实附件：图片进 images，文本文件以 `<file>` 块拼到消息尾部。
+
+    对齐 omp 的 `@` 语义：token 以空白为界，支持 `"@带空格的路径"`；图片按后缀
+    走图片通道，文本读取后截断到 10 万字符。路径不存在、是目录或读不了时
+    原样保留；带 `/` 的缺失路径给一条提示。返回 (新文本, 附加的图片, 提示)。
+    """
+    from agno.media import Image
+
+    images: List = []
+    blocks: List[str] = []
+    notices: List[str] = []
+
+    def replace(match: "re.Match[str]") -> str:
+        token, inner = match.group(0), match.group(1) or match.group(2)
+        path = Path(inner).expanduser()
+        if not path.is_file():
+            if "/" in inner:
+                reason = "目录不能附加" if path.is_dir() else "文件不存在"
+                notices.append(f"@{inner}：{reason}，未附加")
+            return token
+        if path.suffix.lower() in IMAGE_SUFFIXES:
+            try:
+                images.append(Image(filepath=path))
+            except Exception as exc:
+                notices.append(f"@{inner}：图片读取失败（{exc}）")
+            return token
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            notices.append(f"@{inner}：不是可读文本，未附加")
+            return token
+        if len(content) > AT_FILE_CHAR_CAP:
+            size = path.stat().st_size
+            content = content[:AT_FILE_CHAR_CAP] + f"\n…（已截断，完整文件 {size} 字节，可用 read 工具读取）"
+        blocks.append(f'<file path="{path}">\n{content}\n</file>')
+        return token
+
+    text = AT_FILE_TOKEN.sub(replace, text)
+    if blocks:
+        text = text.rstrip() + "\n\n" + "\n\n".join(blocks)
+    return text, (images or None), notices
+
+
 def run_once(
     state: AppState, message: str, output: str, allow_shell: bool = False,
     images: Optional[List] = None,
@@ -178,6 +227,11 @@ def run_once(
     else:
         emitter = PlainEmitter(allow_shell=allow_shell)
     remember_session(str(Path.cwd()), state.session_id)
+    message, at_images, at_notices = expand_at_files(message)
+    for notice in at_notices:
+        print(f"@ 附件：{notice}", file=sys.stderr)
+    if at_images:
+        images = [*(images or []), *at_images]
     summary = stream_run(
         state.runnable, message, state.session_id, state.approved, emitter,
         user_id=_user_id(state), strategy=_approval_strategy(state),
@@ -1006,7 +1060,10 @@ def _run_application(
                 start_continue({"run_id": last, "regenerate": True} if text == "/redo"
                                else {"run_id": last, "input": new_text, "fork": True})
                 return
-            start_turn(text)
+            text, at_images, at_notices = expand_at_files(text)
+            for notice in at_notices:
+                print(f"{GLYPH['dot']} {notice}")
+            start_turn(text, at_images)
 
         class AppRenderer(HumanEmitter):
             """事件先更新 HUD，再按统一渲染输出。"""
