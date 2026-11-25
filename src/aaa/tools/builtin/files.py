@@ -53,6 +53,17 @@ class WorkspaceTools(Workspace):
         # 根不是启动目录时（danger-full-access 的根是 /），相对路径仍按启动目录解析。
         if not Path(path).is_absolute() and self.root != self.base:
             path = str(self.base / path)
+        if self.root.parent == self.root and Path(path).is_absolute():
+            # 锚点根（POSIX 的 `/`、Windows 的盘符根）下任何绝对路径都在范围内，但 Agno 的越界
+            # 检查只收相对子路径，且用 Windows 规则判绝对：`/x` 恰好能过，`C:\x` 会被判越界。
+            # 先折算成根相对路径再交给它，排除规则与报错格式保持不变。
+            resolved = Path(path).resolve()
+            try:
+                path = resolved.relative_to(self.root).as_posix()
+            except ValueError:
+                if os.name != "nt":
+                    return f"Error: {what} escapes workspace root", resolved
+                return None, resolved  # 其他盘符也属于全盘范围
         return super()._resolve(path, what)
 
     def _display(self, file: Path) -> str:

@@ -12,7 +12,13 @@ from contextlib import contextmanager
 from typing import Optional
 
 from prompt_toolkit.input.defaults import create_input
-from prompt_toolkit.input.vt100 import Vt100Input
+
+if os.name != "nt":
+    from prompt_toolkit.input.vt100 import Vt100Input
+else:
+    # prompt_toolkit 的 VT100 输入模块在 Windows 上导入即断言失败；那边走 Win32 输入，
+    # 这里只在 POSIX 分支定义改造过的输入类，Windows 上保持 None。
+    Vt100Input = None
 
 # Shift+Enter 的等价形式；marker 是 prompt_toolkit 唯一能携带原始序列的形态。
 MARKER = "\x1b[27;2;13~"
@@ -232,16 +238,18 @@ class _Reader:
         return self.modified_enter.feed(self.reader.read(*args, **kwargs))
 
 
-class ModifiedEnterInput(Vt100Input):
-    """Keep native fd/TTY lifecycle; adapt this input's reader and flush only."""
+if Vt100Input is not None:
 
-    def __init__(self, stdin):
-        super().__init__(stdin)
-        self.stdin_reader = _Reader(self.stdin_reader)
+    class ModifiedEnterInput(Vt100Input):
+        """Keep native fd/TTY lifecycle; adapt this input's reader and flush only."""
 
-    def flush_keys(self):
-        self.vt100_parser.feed(self.stdin_reader.modified_enter.flush())
-        return super().flush_keys()
+        def __init__(self, stdin):
+            super().__init__(stdin)
+            self.stdin_reader = _Reader(self.stdin_reader)
+
+        def flush_keys(self):
+            self.vt100_parser.feed(self.stdin_reader.modified_enter.flush())
+            return super().flush_keys()
 
 
 def create_cli_input():

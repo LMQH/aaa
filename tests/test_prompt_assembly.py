@@ -7,7 +7,9 @@ from unittest.mock import patch
 from aaa.runtime import prompt as prompt_mod
 
 READ_ONLY = ("read_file", "list_files", "grep", "todo_add", "todo_start", "todo_done", "todo_list")
-WRITE = READ_ONLY + ("write_file", "edit_file", "move_file", "run_shell_command", "job_output", "job_kill")
+# 后台任务在 Windows 上不支持（设计），装配与提示词都不含这两个工具。
+JOB_TOOLS = () if os.name == "nt" else ("job_output", "job_kill")
+WRITE = READ_ONLY + ("write_file", "edit_file", "move_file", "run_shell_command", *JOB_TOOLS)
 FULL = WRITE + ("delete_file",)
 DELEGATION = ("list_delegations", "register_delegation", "delegate_task", "save_delegation")
 GUIDED = {
@@ -45,7 +47,8 @@ class PromptAssemblyTests(unittest.TestCase):
         )
         self.assertNotIn("`delete_file`", text)
         self.assertIn("`run_shell_command`", text)
-        self.assertIn("`job_output`", text)
+        if os.name != "nt":
+            self.assertIn("`job_output`", text)
 
     def test_one_file_tool_still_brings_only_its_own_bullet(self):
         text = prompt_mod.instructions_for("workspace-write", ("write_file",))
@@ -61,7 +64,7 @@ class PromptAssemblyTests(unittest.TestCase):
             text.index("<permission_mode>"),
             text.index("`run_shell_command`"),
             text.index("`write_file`"),
-            text.index("`job_output`"),
+            *([text.index("`job_output`")] if os.name != "nt" else []),
             text.index("`todo_add`"),
             text.index("`delegate_task`"),
         ]

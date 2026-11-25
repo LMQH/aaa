@@ -332,12 +332,14 @@ class ToolsTest(unittest.TestCase):
         self.assertEqual("run_powershell" in names, find_powershell() is not None)
         self.assertIsNone(find_powershell("/nonexistent/powershell"))
 
+    @unittest.skipIf(os.name == "nt", "用 /bin/echo 验证参数传递，Windows 上没有等价的可执行文件")
     def test_powershell_passes_command_as_arguments(self) -> None:
         output = PowerShellTools(executable="/bin/echo").run_powershell("Write-Output hi")
         for flag in ("-NoProfile", "-NonInteractive", "-Command", "Write-Output hi"):
             self.assertIn(flag, output)
 
 
+@unittest.skipIf(os.name == "nt", "后台任务在 Windows 上不支持（设计）")
 class ShellJobTest(unittest.TestCase):
     def setUp(self) -> None:
         self.work = Path(tempfile.mkdtemp(prefix="aaa-jobs-"))

@@ -328,6 +328,14 @@ def clear_credentials(runnable) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> None:
+    if os.name == "nt":
+        # Windows 按控制台代码页（cp1252/gbk 等）编码重定向输出，中文界面会直接抛错；
+        # 控制台本身走 WriteConsoleW，不受影响。统一改用 UTF-8。
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.reconfigure(encoding="utf-8")
+            except (AttributeError, ValueError, OSError):
+                pass
     settings = load_settings()
     for warning in settings.warnings:
         print(warning, file=sys.stderr)

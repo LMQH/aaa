@@ -77,7 +77,7 @@ def fingerprint(project: Dict[str, Path], kind: str) -> str:
     root = project["root"]
     for path in files:
         try:
-            rel = str(path.relative_to(root))
+            rel = path.relative_to(root).as_posix()
             data = path.read_bytes()
         except OSError:
             continue
@@ -93,7 +93,7 @@ def describe(project: Dict[str, Path], kind: str) -> list[str]:
     out = []
     for path in _kind_files(project, kind):
         try:
-            out.append(str(path.relative_to(root)))
+            out.append(path.relative_to(root).as_posix())
         except ValueError:
             out.append(str(path))
     return out

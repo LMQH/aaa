@@ -125,7 +125,7 @@ P2 实现在 `tests/pty_cases.py`，由 `e2e.py --pty` 导入。
 |---|---|
 | fallback 真实切换 | 同渠道共享 `base_url`，无法让主模型单独失败；需要注入 429/5xx 或按模型给独立端点 |
 | 上下文窗口溢出恢复（`on_context_overflow`） | 需要真实超长请求；1M 窗口下成本不可接受 |
-| PowerShell 工具 | 本机没有 `pwsh`/`powershell`：只验证了“不存在时不装配”与参数拼装，未在 Windows 实跑 |
+| PowerShell 工具 | 已由 GitHub Windows 机器实测（`windows-latest`，pwsh 7.6.10：编码、中文输出、目录）；本机仍没有 `pwsh`/`powershell`，日常回归只覆盖“不存在时不装配”与参数拼装 |
 | `-c`（按目录续接） | 端到端无用例；`-c` 依赖的目录→会话索引仅有单测覆盖（P0.4 走 `-r`，不经过索引） |
 | 真实渠道记忆写入与注入 | 本轮只验证离线原生存取、CLI 与装配；真实模型主动记录及下一轮注入未实测 |
 | 多渠道路径歧义 | 已手工验证（`deepseek-flash` → `Ambiguous`），未入脚本以免重复成本 |

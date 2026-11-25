@@ -3,7 +3,10 @@
 import unittest
 
 from aaa.cli.git_status import GitStatus, _parse
-from aaa.cli.ui import display_width, editor_status, todo_lines
+from aaa.cli.ui import TODO_MARKS, display_width, editor_status, todo_lines
+
+ACTIVE = TODO_MARKS["in_progress"]
+PENDING = TODO_MARKS["pending"]
 
 
 class TodoTreeTest(unittest.TestCase):
@@ -17,7 +20,7 @@ class TodoTreeTest(unittest.TestCase):
         texts = [text for _, text in lines]
         self.assertEqual(texts[0], "TODO 1/3")
         self.assertEqual(texts[1], "├─ A 1/2")
-        self.assertIn("▶ 2. 进行中", "\n".join(texts))
+        self.assertIn(f"{ACTIVE} 2. 进行中", "\n".join(texts))
         # 非当前阶段折叠：只有标题
         self.assertIn("└─ B 0/1", texts[-1])
         self.assertFalse(any("待办二" in text for text in texts))
@@ -25,8 +28,8 @@ class TodoTreeTest(unittest.TestCase):
     def test_no_in_progress_does_not_fake_one(self) -> None:
         items = [{"text": "待办", "phase": "A", "status": "pending"}]
         texts = [text for _, text in todo_lines(items, 80)]
-        self.assertIn("· 1. 待办", texts[-1])
-        self.assertNotIn("▶", "".join(texts))
+        self.assertIn(f"{PENDING} 1. 待办", texts[-1])
+        self.assertNotIn(ACTIVE, "".join(texts))
 
     def test_height_budget_keeps_current_task(self) -> None:
         items = [
@@ -37,7 +40,7 @@ class TodoTreeTest(unittest.TestCase):
         items[17]["status"] = "in_progress"  # 当前任务 B15，位于预算之外
         texts = [text for _, text in todo_lines(items, 60)]
         self.assertLessEqual(len(texts), 13)
-        self.assertTrue(any("▶" in text and "B15" in text for text in texts))
+        self.assertTrue(any(ACTIVE in text and "B15" in text for text in texts))
         self.assertTrue(texts[-1].startswith("… 还有"))
 
     def test_width_truncation_never_overflows(self) -> None:

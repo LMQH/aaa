@@ -27,6 +27,7 @@ aaa 负责翻译到装配点（Agno 公开接口 + aaa 自有层）。Agno 升�
 - **能力映射**：`capability` 填 boundary 既有能力名时跟随该能力的模式存在性；自定义能力默认 `workspace-write` 以上可得，`read_safe=True` 才全模式可得。
 - **确认规则**：`always`/`dangerous` → `requires_confirmation=True`；`mode` → 跟随当前模式的确认名单（read-only 与 danger-full-access 名单为空则不问，workspace-write 询问）。`dangerous` v1 等同 `always`（通用 dangerous 策略后续接入时再区分）。
 - **生效方式**：启动时发现、重启生效；`.disabled` 停用；`/plugin` 启停不变。
+- **MCP 启动命令**：`[mcp] command` 是声明式字符串。POSIX 交给 Agno 拆词；Windows 上按 Windows 规则拆好（保留反斜杠路径、去掉分段引号，拒绝 shell 元字符），以结构化 `server_params` 交给 Agno——Agno 的 `command=` 走 POSIX 拆词，会把 `C:\…` 拆坏。进程怎么起仍由 MCP SDK 决定（它自己把 `.cmd`/`.bat` 经 `cmd /c` 启动）。
 - **信任**：项目级编程扩展属于既有 `extensions` 信任类别（指纹含 `extension.py`），未信任不加载；用户级 `~/.aaa/extensions` 不问信任。
 - **失败语义**：加载失败 → 该扩展禁用 + 启动告警；事件 handler 异常 → 跳过并计数，3 次 → 会话内挂起；均不影响主 Agent 与其他扩展。
 - **事件语义（v1）**：`run.started`/`message.user` 在轮前派发（run 前钩子）；`tool.*`/`message.assistant`/`run.completed` 在轮末统一回放（run 后钩子扫描本轮产物）；`run.failed` 由 CLI 运行路径派发。自定义事件走 `ext/<扩展名>/<事件>`。

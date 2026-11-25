@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -41,9 +42,12 @@ class ToolScopeTests(unittest.TestCase):
         return found
 
     def test_shell_runs_in_launch_directory_in_every_mode(self):
+        # Windows 上 `pwd` 可能落到 Git Bash 的 POSIX 实现；用 cmd 的内建命令取原生工作目录。
+        command = ["cmd", "/c", "cd"] if os.name == "nt" else ["pwd"]
         for mode in (MODE_WRITE, MODE_FULL):
             with self.subTest(mode=mode):
-                self.assertEqual(self.tools(mode)["run_shell_command"](["pwd"]).strip(), str(self.root.resolve()))
+                out = self.tools(mode)["run_shell_command"](command).strip()
+                self.assertTrue(Path(out).samefile(self.root), out)
 
     def test_relative_paths_resolve_against_launch_directory_in_full_access(self):
         tools = self.tools(MODE_FULL)
@@ -114,9 +118,13 @@ class ToolScopeTests(unittest.TestCase):
         self.assertEqual(paths, [".env.example", "app.py", "notes.txt", "sub/deep.py"])
         for path in paths:
             self.assertIn(TOKEN, tools["read_file"](path=path))
-        outside = json.loads(tools["list_files"]("/etc"))["files"]
-        hosts = next(entry["path"] for entry in outside if entry["path"].endswith("/hosts"))
-        self.assertIn("localhost", tools["read_file"](path=hosts))
+        # 启动目录之外同样可读：列一个无关临时目录，再按列出的路径读回内容。
+        outside = Path(tempfile.mkdtemp(prefix="aaa-outside-"))
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        (outside / "hosts").write_text("localhost\n", encoding="utf-8")
+        listing = json.loads(tools["list_files"](str(outside)))["files"]
+        target = next(entry["path"] for entry in listing if entry["path"].endswith("hosts"))
+        self.assertIn("localhost", tools["read_file"](path=target))
 
 
 if __name__ == "__main__":

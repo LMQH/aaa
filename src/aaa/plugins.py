@@ -22,7 +22,9 @@ MCP 桥接：agno 的 MCPTools 只支持异步上下文，而 aaa 的 agent 是�
 
 import asyncio
 import logging
+import os
 import re
+import shlex
 import threading
 import tomllib
 from dataclasses import dataclass, field, replace
@@ -508,6 +510,30 @@ def _bridge(entrypoint, timeout: float):
     return run
 
 
+def _windows_stdio_params(command: str, env: Dict[str, str]):
+    """Windows 上按 Windows 规则拆 MCP 启动命令，换成 Agno 的结构化参数。
+
+    Agno 的 `command=` 用 POSIX 规则拆词：Windows 路径里的反斜杠会被当转义符吃掉，
+    带盘符的绝对路径还会被判成非法命令，连接必然失败。这里保留反斜杠、去掉分段两端的
+    引号后再交给它；进程怎么启动仍由 MCP SDK 决定（它自己会把 .cmd/.bat 经 cmd /c 启动）。
+    """
+    from mcp import StdioServerParameters
+    from mcp.client.stdio import get_default_environment
+
+    if any(char in command for char in "&|;`$()"):
+        raise ValueError("MCP 命令不能包含 shell 元字符")
+    parts = []
+    for raw in shlex.split(command, posix=False):
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+            raw = raw[1:-1]
+        parts.append(raw)
+    if not parts:
+        raise ValueError("MCP 命令为空")
+    return StdioServerParameters(
+        command=parts[0], args=parts[1:], env={**get_default_environment(), **env}
+    )
+
+
 def open_mcp_tools(exts: List[McpExtension], timeout: float) -> Tuple[List[Function], List[str]]:
     """连接启用的 MCP 插件，返回（同步桥接后的 Function 列表, 失败名单）。
 
@@ -521,6 +547,11 @@ def open_mcp_tools(exts: List[McpExtension], timeout: float) -> Tuple[List[Funct
         if not ext.enabled:
             continue
         spec = ext.spec
+        env = (
+            {str(k): str(v) for k, v in spec["env"].items()}
+            if isinstance(spec.get("env"), dict)
+            else {}
+        )
         try:
             async def _open():
                 kwargs: Dict[str, Any] = {"timeout_seconds": int(timeout)}
@@ -528,10 +559,12 @@ def open_mcp_tools(exts: List[McpExtension], timeout: float) -> Tuple[List[Funct
                     kwargs["url"] = spec["url"]
                     if spec.get("transport"):
                         kwargs["transport"] = spec["transport"]
+                elif os.name == "nt":
+                    kwargs["server_params"] = _windows_stdio_params(str(spec["command"]), env)
                 else:
                     kwargs["command"] = str(spec["command"])
-                if isinstance(spec.get("env"), dict):
-                    kwargs["env"] = {str(k): str(v) for k, v in spec["env"].items()}
+                    if env:
+                        kwargs["env"] = env
                 mcp_tools = MCPTools(**kwargs)
                 await mcp_tools.__aenter__()
                 return mcp_tools

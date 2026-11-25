@@ -14,6 +14,7 @@ from aaa.cli import picker
 from aaa.cli.commands import _animation_items, _ask_menu
 from aaa.cli.ui import (
     COMMANDS,
+    GLYPH,
     ICONS,
     completion_rows,
     display_width,
@@ -133,8 +134,8 @@ class CompletionRowsTest(unittest.TestCase):
     def test_pointer_marks_current_row_and_meta_column_lines_up(self):
         rows = completion_rows(self._items(), 1, 60, 10)
         plain = self._plain(rows)
-        self.assertTrue(plain[1].startswith("❯ "))
-        self.assertFalse(plain[0].startswith("❯"))
+        self.assertTrue(plain[1].startswith(f"{GLYPH['pointer']} "))
+        self.assertFalse(plain[0].startswith(GLYPH["pointer"]))
         self.assertEqual(len({line.index("说明") for line in plain}), 1)
 
     def test_rows_fill_the_width_and_carry_a_scrollbar(self):
@@ -142,12 +143,12 @@ class CompletionRowsTest(unittest.TestCase):
         self.assertEqual(len(rows), 10)
         for row in rows:
             self.assertEqual(display_width("".join(text for _, text in row)), 80)
-        self.assertTrue(self._plain(rows)[-1].startswith("❯ "))
+        self.assertTrue(self._plain(rows)[-1].startswith(f"{GLYPH['pointer']} "))
         self.assertIn("█", [row[-1][1] for row in rows])
 
     def test_without_a_selection_no_row_gets_the_pointer(self):
         rows = completion_rows(self._items(), None, 60, 10)
-        self.assertFalse(any(text.startswith("❯") for _, text in rows[0]))
+        self.assertFalse(any(text.startswith(GLYPH["pointer"]) for _, text in rows[0]))
 
     def test_selected_row_uses_color_not_reverse_video(self):
         # prompt_toolkit 自带样式给 completion.current 加了 reverse；必须显式关掉。

@@ -84,7 +84,7 @@ tools/
 - 输出超出上限时截断并加 `[output truncated]`；返回前按 `tail` 取末尾行。默认上限高于 Agno 卸载阈值，让超限结果以「信封 + 可回读全文」的形态进上下文。
 - 退出码非零时优先返回 stderr，其次 stdout，两者皆空时返回 `Error: exit code N`。
 - 后台 job id 必须是 8 位十六进制，直接用于路径拼接前先校验，防穿越。
-- 相对路径按启动目录解析，命令也在启动目录执行；根只决定文件工具的边界，三档里只有 `danger-full-access` 的根是 `/`。`build_tools(cwd=…)` 把根与启动目录分开传。
+- 相对路径按启动目录解析，命令也在启动目录执行；根只决定文件工具的边界，三档里只有 `danger-full-access` 的根是文件系统锚点（POSIX 的 `/`、Windows 的盘符根），Windows 上该档接受带盘符的绝对路径与其他盘符。`build_tools(cwd=…)` 把根与启动目录分开传。
 - `grep` 与文件工具共用 Workspace 的排除规则与豁免项，跳过符号链接、二进制与超过 1 MB 的文件，单次检索 30 秒封顶。`WorkspaceTools` 依赖 Agno `Workspace._resolve` 与 `_is_excluded`，Agno 升级时由 `tests/test_tools_scope.py` 拦截变化。
 
 ## 对外接口

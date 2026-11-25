@@ -197,6 +197,7 @@ class ApprovalEnterTest(unittest.TestCase):
         self.assertEqual(accepted, ['hello'])
 
 
+@unittest.skipIf(os.name == "nt", "modifyOtherKeys 只在 POSIX 终端启用，Windows 走 Win32 输入")
 class ExtendedKeysToggleTest(unittest.TestCase):
     def test_enable_and_restore_only_on_supported_terminal(self):
         class Stream:

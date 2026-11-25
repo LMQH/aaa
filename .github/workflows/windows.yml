@@ -1,0 +1,277 @@
+name: windows
+
+# Windows 实测：先在测试分支上跑，不阻塞主 CI；变绿后再并入 ci.yml。
+# 仓库公开，日志同样公开：这里只用假的渠道配置与本地假模型，不接任何真实渠道。
+# GitHub 的 bash 默认「一条命令失败即中止」，各步骤开头显式关掉，保证一次运行把能收集的都收集到。
+on:
+  workflow_dispatch:
+  push:
+    branches: ["test/windows-ci"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: false
+          python-version: "3.13"
+
+      - name: 记录环境
+        run: |
+          set +e
+          mkdir -p logs
+          {
+            cmd /c ver
+            uv --version
+            uv python find
+            echo "--- 符号链接在 Windows 检出后的形态 ---"
+            git config core.symlinks
+            ls -la src/aaa/builtin_skills/create-extension/
+          } > logs/env.txt 2>&1
+          cat logs/env.txt
+
+      - name: 安装依赖
+        run: |
+          set +e
+          if ! uv sync --frozen --extra embedding > logs/sync.txt 2>&1; then
+            echo "::warning::带 embedding 的依赖安装失败，回退到不带 embedding"
+            echo "---- 回退：不带 embedding ----" >> logs/sync.txt
+            uv sync --frozen >> logs/sync.txt 2>&1
+          fi
+          tail -4 logs/sync.txt
+
+      - name: 默认编码探针
+        run: |
+          set +e
+          # 不设 PYTHONUTF8，看中文输出在 Windows 默认编码下是否会崩。
+          env -u PYTHONUTF8 uv run python -c "import sys, locale; print(sys.stdout.encoding, locale.getpreferredencoding()); print('中文输出测试')" > logs/encoding.txt 2>&1
+          echo "exit=$?" >> logs/encoding.txt
+          cat logs/encoding.txt
+
+      - name: 单元测试
+        run: |
+          set +e
+          export PYTHONPATH="$GITHUB_WORKSPACE/src;$GITHUB_WORKSPACE/tests"
+          timeout 900 uv run python -m unittest discover -s tests -p "test_*.py" > logs/unit.txt 2>&1
+          echo "exit=$?" >> logs/unit.txt
+          grep -E "^(Ran |OK|FAILED|exit=)" logs/unit.txt
+          echo "错误用例数: $(grep -c "^ERROR:" logs/unit.txt)，失败用例数: $(grep -c "^FAIL:" logs/unit.txt)"
+
+      - name: 启动与工具直调
+        run: |
+          set +e
+          export PYTHONPATH="$GITHUB_WORKSPACE/src;$GITHUB_WORKSPACE/tests"
+          cat > "$RUNNER_TEMP/tool_probe.py" <<'PY'
+          import os
+          import tempfile
+          import time
+          import traceback
+          from pathlib import Path
+
+          from aaa.config.settings import Settings
+          from aaa.runtime.agent import tools_for_mode
+          from aaa.tools.builtin.powershell import PowerShellTools, find_powershell
+          from aaa.tools.builtin.processes import ProcessTools
+
+          work = Path(tempfile.mkdtemp(prefix="aaa-win-"))
+          os.chdir(work)  # 启动目录就是这个临时工作区
+          (work / "app.py").write_text("TOKEN = 1\nsecond line\n", encoding="utf-8")
+
+
+          def tools(mode):
+              found = {}
+              for tool in tools_for_mode(mode, Settings()):
+                  for name in getattr(tool, "functions", None) or {}:
+                      found[name] = getattr(tool, name)
+              return found
+
+
+          def probe(label, fn):
+              try:
+                  print(f"{label}: {fn()!r}")
+              except Exception:
+                  print(f"{label}: 抛出异常")
+                  traceback.print_exc()
+
+
+          print("== 工具清单 ==")
+          ro, ww, full = tools("read-only"), tools("workspace-write"), tools("danger-full-access")
+          for name, table in (("read-only", ro), ("workspace-write", ww), ("danger-full-access", full)):
+              print(f"{name}: {sorted(table)}")
+
+          print("== 文件工具 ==")
+          probe("只读 read_file 相对路径", lambda: ro["read_file"](path="app.py"))
+          probe("全权限 read_file 相对路径", lambda: full["read_file"](path="app.py"))
+          probe("全权限 read_file 绝对路径 win.ini", lambda: full["read_file"](path="C:/Windows/win.ini")[:40])
+          probe("全权限 list_files", lambda: full["list_files"]())
+          probe("可写 write_file", lambda: ww["write_file"](path="new.txt", content="写入内容\n"))
+          probe("只读 read_file 回读新文件", lambda: ro["read_file"](path="new.txt"))
+          probe("可写 edit_file", lambda: ww["edit_file"](path="new.txt", old_str="写入内容", new_str="改后内容"))
+          probe("可写 move_file", lambda: ww["move_file"](src="new.txt", dst="moved.txt"))
+          probe("可写 grep", lambda: ww["grep"](pattern="TOKEN"))
+
+          print("== Shell 工具 ==")
+          proc = ProcessTools(timeout_seconds=2)
+          probe("前台 cmd /c cd（工作目录）", lambda: proc.run_shell_command(["cmd", "/c", "cd"]))
+          probe("前台 echo", lambda: proc.run_shell_command(["cmd", "/c", "echo shell-ok"]))
+          probe("后台", lambda: proc.run_shell_command(["cmd", "/c", "echo bg"], background=True))
+          probe("超时", lambda: proc.run_shell_command(["cmd", "/c", "ping -n 6 127.0.0.1 > nul"]))
+          time.sleep(0.5)
+          probe("超时之后前台仍可用", lambda: proc.run_shell_command(["cmd", "/c", "echo after-timeout"]))
+          probe("which pwd（类 Unix 的 pwd 是否存在）", lambda: proc.run_shell_command(["which", "pwd"]))
+
+          print("== PowerShell 工具 ==")
+          print(f"find_powershell(): {find_powershell()!r}")
+          try:
+              ps = PowerShellTools(timeout_seconds=20)
+          except Exception as exc:
+              print(f"PowerShellTools 构造失败: {exc!r}")
+              ps = None
+          probe("版本", lambda: ps.run_powershell("$PSVersionTable.PSVersion.ToString()"))
+          probe("控制台输出编码", lambda: ps.run_powershell("[Console]::OutputEncoding.WebName"))
+          probe("Write-Output ps-ok", lambda: ps.run_powershell("Write-Output ps-ok"))
+          probe("中文输出", lambda: ps.run_powershell("Write-Output '中文输出'"))
+          probe("当前目录", lambda: ps.run_powershell("Get-Location | Select-Object -ExpandProperty Path"))
+          probe("列出目录", lambda: ps.run_powershell("Get-ChildItem -Name"))
+
+          print("== 仓库信任指纹里的路径写法 ==")
+          from aaa import trust
+          from aaa import plugins
+
+          project = plugins.project_dirs(str(work))
+          (work / ".aaa" / "skills" / "toy").mkdir(parents=True)
+          (work / ".aaa" / "skills" / "toy" / "SKILL.md").write_text("---\nname: toy\n---\n正文", encoding="utf-8")
+          probe("trust.describe", lambda: trust.describe(project, "skills"))
+          PY
+          {
+            echo '$ python -m aaa --version'
+            uv run python -m aaa --version
+            echo "exit=$?"
+            echo '$ python -m aaa --help（重定向下的中文帮助）'
+            uv run python -m aaa --help
+            echo "exit=$?"
+            echo '$ python -c "import aaa.cli.key_input"'
+            uv run python -c "import aaa.cli.key_input"
+            echo "exit=$?"
+            echo '$ 工具探针'
+            uv run python "$RUNNER_TEMP/tool_probe.py"
+            echo "exit=$?"
+          } > logs/tools.txt 2>&1
+          cat logs/tools.txt
+
+      - name: 假模型下跑通一轮对话
+        run: |
+          set +e
+          export PYTHONPATH="$GITHUB_WORKSPACE/src;$GITHUB_WORKSPACE/tests"
+          cat > "$RUNNER_TEMP/fake_model.py" <<'PY'
+          import json
+          import sys
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+          class Handler(BaseHTTPRequestHandler):
+              def log_message(self, *args):
+                  pass
+
+              def do_POST(self):
+                  self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+                  self.send_response(200)
+                  self.send_header("Content-Type", "text/event-stream")
+                  self.end_headers()
+                  chunks = [
+                      {"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "m",
+                       "choices": [{"index": 0, "delta": {"content": "你好，我是假模型。"}, "finish_reason": None}]},
+                      {"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "m",
+                       "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+                  ]
+                  for chunk in chunks:
+                      self.wfile.write(f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode("utf-8"))
+                  self.wfile.write(b"data: [DONE]\n\n")
+                  self.wfile.flush()
+
+          ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+          PY
+          uv run python "$RUNNER_TEMP/fake_model.py" 18765 &
+          for _ in $(seq 1 50); do
+            (echo > /dev/tcp/127.0.0.1/18765) 2>/dev/null && break
+            sleep 0.2
+          done
+          mkdir -p "$RUNNER_TEMP/home/.aaa"
+          cat > "$RUNNER_TEMP/home/.aaa/secret.yaml" <<'YAML'
+          version: 2
+          default:
+            provider: fake
+            model: m
+          providers:
+            fake:
+              name: fake
+              api: openai-completions
+              base_url: http://127.0.0.1:18765/v1
+              api_key: x
+              models:
+                - m
+          YAML
+          export USERPROFILE="$RUNNER_TEMP/home" HOME="$RUNNER_TEMP/home"
+          # 不在仓库目录里启动，避免读到仓库自带的项目级配置。
+          cd "$RUNNER_TEMP"
+          uv run --project "$GITHUB_WORKSPACE" python -m aaa -p "你好" > "$GITHUB_WORKSPACE/logs/smoke.txt" 2>&1
+          echo "exit=$?" >> "$GITHUB_WORKSPACE/logs/smoke.txt"
+          cat "$GITHUB_WORKSPACE/logs/smoke.txt"
+
+      - name: Windows 上打包
+        run: |
+          set +e
+          {
+            uv build --wheel --out-dir "$RUNNER_TEMP/dist"
+            echo "exit=$?"
+          } > logs/build.txt 2>&1
+          tail -3 logs/build.txt
+
+      - name: 汇总
+        run: |
+          set +e
+          fail=0
+          for entry in unit.txt smoke.txt build.txt; do
+            last=$(grep -o '^exit=[0-9]*' "logs/$entry" | tail -1 | cut -d= -f2)
+            if [ "$last" != "0" ]; then
+              echo "::error::$entry 最后一个退出码是 ${last:-缺失}"
+              fail=1
+            fi
+          done
+          # tools.txt 里每条命令后面都记了退出码，全部必须为 0。
+          while read -r line; do
+            code=${line#exit=}
+            if [ "$code" != "0" ]; then
+              echo "::error::tools.txt 中有一条命令退出码为 $code"
+              fail=1
+            fi
+          done < <(grep '^exit=' logs/tools.txt)
+          if ! grep -qE '^(Ran [0-9]+ tests?|OK)' logs/unit.txt; then
+            echo "::error::unit.txt 里没有测试汇总行"
+            fail=1
+          fi
+          exit $fail
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: windows-logs
+          path: logs/
+          retention-days: 14
