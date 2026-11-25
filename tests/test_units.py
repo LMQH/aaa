@@ -836,9 +836,9 @@ class PluginsTest(unittest.TestCase):
             "---\nname: beta\ndescription: 嵌套技能\n---\n正文B", encoding="utf-8"
         )
         skills, sources = plugins.build_skills([(d, "user")])
-        # Agno 只扫一层：分类目录下的技能不进发现结果。
-        self.assertEqual([s.name for s in skills.get_all_skills()], ["alpha"])
-        self.assertEqual(sources, {"alpha": "user"})
+        # 任意深度发现：分类目录下的技能同样进发现结果，包名取第一段目录。
+        self.assertEqual(sorted(s.name for s in skills.get_all_skills()), ["alpha", "beta"])
+        self.assertEqual(sources, {"alpha": "user", "beta": "user"})
         self.assertEqual(json.loads(skills._get_skill_instructions("alpha"))["instructions"], "正文A")
 
     def test_mcp_discovery_and_toggle(self) -> None:

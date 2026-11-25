@@ -27,7 +27,7 @@ COMMANDS = [
     ("/todos", "查看当前会话的任务清单"),
     ("/export", "导出当前会话为 markdown（可跟路径）"),
     ("/image", "发送本地图片给模型：/image <路径>"),
-    ("/plugin", "查看或启停 MCP 插件（重启生效）：/plugin <名称>"),
+    ("/plugin", "查看或启停 MCP 插件与技能包（重启生效）：/plugin <名称>"),
     ("/skills", "列出发现的技能（模型可用 get_skill_instructions 读取）"),
     ("/panel", "查看/切换扩展面板：/panel <名>，off 关闭"),
     ("/redo", "重新生成最后一轮回复"),

@@ -1,15 +1,26 @@
 # 技能
 
-技能是给模型的领域说明：一个含 `SKILL.md` 的目录，发现、索引披露与正文读取由 Agno 原生 `agno.skills` 承担，aaa 只在装配点提供目录与来源标签。技能还可携带 `references/` 参考文档与 `scripts/` 可执行脚本。
+技能是给模型的领域说明：一个含 `SKILL.md` 的目录，发现、索引披露与正文读取由 Agno 原生 `agno.skills` 承担，aaa 只在装配点提供目录、来源标签与技能包过滤。技能还可携带 `references/` 参考文档与 `scripts/` 可执行脚本。
 
 ## 位置与命名
 
 - 用户目录：`~/.agents/skills/<技能名>/SKILL.md`
 - 随包目录：`aaa/builtin_skills/<技能名>/SKILL.md`
 - 项目目录：仓库 `.aaa/skills/<技能名>/SKILL.md`
-- 技能名取 frontmatter 的 `name`，缺省用目录名；发现只扫一层 `<目录>/<技能名>/SKILL.md`。同名时后装配的覆盖先装配的：装配按 builtin → user → project 传入 loader，因此优先级为 project > user > builtin（用户目录排在随包目录之前，可以覆盖内置技能）。
+- 技能名取 frontmatter 的 `name`，缺省用目录名；发现任意深度，含 `SKILL.md` 的目录即技能且不再下钻（点目录与 `references/` 等支持目录不进）。同名时后装配的覆盖先装配的：装配时每个技能目录一个 loader，按 builtin → user → project 传入，因此优先级为 project > user > builtin（用户目录排在随包目录之前，可以覆盖内置技能）。
 
 启动时扫描一次，改完要重启 aaa。
+
+## 技能包
+
+技能根下的分组目录就是技能包：`<根>/<包>/<技能名>/SKILL.md` 归该包，平铺的 `<根>/<技能名>/SKILL.md` 无包。包只是目录组织投射出的视图，不改技能名，也不参与仓库信任门控（项目技能仍要先过 `/trust`）。`~/.agents/skills` 被其他工具共用且只认平铺，往里建分类目录会让别的工具看不见这些技能。
+
+- 包描述写在包目录的 `PACK.md` frontmatter `description` 里，说明什么场景该用这个包——它进系统提示词，是模型决定是否深入的唯一依据，写法标准与技能的 `description` 相同。
+- 索引是 names-only：每个包渲染成「名字 + 描述 + 成员名单」，包内技能的描述不进索引，名字全部保留，成员照常 `get_skill_instructions(成员名)` 加载。技能多的大包靠这个省索引，小包不值得成包。
+- 停用：包目录放 `.disabled` 标记整包停用（`/plugin` 回车或 `/plugin <包名>` 切换），技能目录放 `.disabled` 只停单个技能。停用的技能不装配：不进索引，`/skills` 看不到，模型也读不到。
+- 包内可以有更深的嵌套（`<包>/<子目录>/<技能名>/`），子目录不改变包归属。
+- 名为 `references`、`scripts`、`templates`、`assets` 的目录不会成为包或技能根；跨根同名时技能归优先级最高的那一份，包标签跟着装配赢家走。
+- 治理参考：成包前先写好 `PACK.md` 的触发场景；包内技能少于 5 个时直接平铺更划算。
 
 ## 格式
 
@@ -41,7 +52,9 @@ description: 发布前检查版本、锁文件与变更记录。用户说“发�
 
 ## 查看
 
-`/skills` 列出发现的技能与各自 description 的第一行。
+`/skills` 列出发现的技能与各自 description 的第一行，带 `[来源]`，归了包的再带 `[包名]`。
+
+`/plugin` 列出技能包（含已停用的，附 `PACK.md` 描述）与 MCP 插件，回车切换启停；`/plugin <包名>` 直达。
 
 ## 创建方式
 
@@ -50,7 +63,7 @@ description: 发布前检查版本、锁文件与变更记录。用户说“发�
 
 ## 生效
 
-重启 aaa 后生效。技能不修改配置，不触发 Agent 重建。
+重启 aaa 后生效。技能不修改配置，不触发 Agent 重建；`/plugin` 切换技能包只增删包目录的 `.disabled` 标记，同样重启生效。
 
 ## 与命令模板的区别
 

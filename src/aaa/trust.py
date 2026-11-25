@@ -45,12 +45,21 @@ def _kind_files(project: Dict[str, Path], kind: str) -> list[Path]:
     if kind in ("animations", "memory_engines"):
         return sorted(p for p in base.glob("*.py") if p.is_file())
     if kind == "skills":
+        from . import plugins
+
         files: list[Path] = []
-        for sub in sorted(base.iterdir()):
-            if not sub.is_dir() or not (sub / "SKILL.md").is_file():
-                continue
-            files.extend(sorted(p for p in sub.rglob("*") if p.is_file()))
-        return files
+        pack_roots: set[Path] = set()
+        for skill_dir in plugins.iter_skill_dirs(base):
+            files.extend(p for p in skill_dir.rglob("*") if p.is_file())
+            relative = skill_dir.relative_to(base)
+            if len(relative.parts) > 1:
+                pack_roots.add(base / relative.parts[0])
+        # 包描述 PACK.md 也进指纹：它决定索引里向模型展示什么。
+        for pack_dir in sorted(pack_roots):
+            pack_doc = pack_dir / "PACK.md"
+            if pack_doc.is_file():
+                files.append(pack_doc)
+        return sorted(set(files))
     files = []
     for sub in sorted(base.iterdir()):
         if not sub.is_dir() or not (sub / "extension.toml").is_file():

@@ -11,6 +11,7 @@ aaa 的开放面分两类：**加文件的插件**与**改配置的自定义**�
 | MCP 扩展 | `~/.aaa/extensions/<name>/extension.toml` | TOML 的 `[mcp]` 段 | 下次启动 | 外部工具，每次执行都审批 |
 | 外置记忆引擎 | `~/.aaa/memory_engines/<id>.py` 或 entry point `aaa.memory_engines` | 工厂接收独立数据目录；可声明工具与提示块 | 通过 `/memory` 菜单选择，重启生效 | 受信任的进程内代码 |
 | 技能 | `~/.agents/skills/<name>/SKILL.md` | frontmatter + 正文，可含 `references/` 与 `scripts/` | 下次启动 | 文本 + 脚本执行面（见 `skills.md`） |
+| 技能包 | 技能根下的分组目录（`<根>/<包>/<技能名>/`），描述在包目录 `PACK.md` | 目录即包；包目录 `.disabled` 整包停用 | 下次启动 | 只决定装不装配，不含可执行内容（见 `skills.md`） |
 | 编程式扩展 | `~/.aaa/extensions/<name>/`：`extension.toml` + `extension.py` | `activate(ctx)` 注册工具/事件/拦截/提示词块/面板/命令 | 下次启动 | 进程内代码，需仓库信任（项目级）；见 `extensions.md` |
 | 渠道与模型 | `~/.aaa/secret.yaml` | YAML v2 | 重启 | 含密钥，文件权限 0600 |
 | 配置项 | `~/.aaa/config.toml` | 经 `/config` 修改 | 逐键不同 | — |
@@ -36,9 +37,9 @@ aaa 的开放面分两类：**加文件的插件**与**改配置的自定义**�
 |---|---|
 | 启动动画 | 用安装 aaa 的 Python 执行 `python -m aaa.cli.banner --animation <名> --duration 1`，详见[调试](animations.md#调试) |
 | 斜杠命令 | `/help` 或补全菜单出现该命令 |
-| MCP 扩展 | `/plugin` 列出，`●` 为启用、`○` 为停用 |
+| MCP 扩展与技能包 | `/plugin` 列出，`●` 为启用、`○` 为停用 |
 | 记忆引擎 | `/memory` 显示当前引擎并提供切换菜单 |
-| 技能 | `/skills` 列出名字与 description |
+| 技能 | `/skills` 列出名字与 description，带来源与技能包 |
 | 渠道与模型 | `/model` 能看到该渠道下的模型 |
 | 配置项 | `/config <键>` 回显当前值 |
 

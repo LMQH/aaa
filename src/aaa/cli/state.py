@@ -86,6 +86,9 @@ class AppState:
     plugin_commands: Dict[str, object] = field(default_factory=dict)
     plugin_skills: Optional[Skills] = None
     skill_sources: Dict[str, str] = field(default_factory=dict)
+    # 技能包：技能名→包名（只含已装配的），以及 /plugin 用的包视图。
+    skill_packs: Dict[str, str] = field(default_factory=dict)
+    skill_pack_info: List = field(default_factory=list)
     plugin_extensions: List = field(default_factory=list)
     extension_registry: ExtensionRegistry = field(default_factory=ExtensionRegistry)
     extra_tools: List = field(default_factory=list)
@@ -108,6 +111,7 @@ class AppState:
         discovery = plugins.discover_extensions(project, trusted=trusted, skills_user_dirs=SKILLS_DIRS)
         commands = discovery.commands
         skills, skill_sources = discovery.skills, discovery.skill_sources
+        skill_packs = discovery.skill_packs
         extensions = discovery.mcp
         registry = ExtensionRegistry()
         load_extensions(discovery.python, registry, settings)
@@ -171,6 +175,8 @@ class AppState:
             plugin_commands=commands,
             plugin_skills=skills,
             skill_sources=skill_sources,
+            skill_packs=skill_packs,
+            skill_pack_info=discovery.pack_info,
             plugin_extensions=extensions,
             extension_registry=registry,
             extra_tools=extra_tools,

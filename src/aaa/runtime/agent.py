@@ -18,7 +18,7 @@ from ..extensions.loader import ExtensionRegistry, tool_guard
 from ..memory import MemoryEngineError
 from ..memory.host import ActiveMemory, MemoryHost
 from ..model.catalog import Catalog, ModelRef
-from ..plugins import GatedSkills
+from ..plugins import PackSkills
 from ..tools.assemble import build_tools, tool_names
 from .delegation import make_delegation_tools
 from .delegation_registry import DelegationRegistry
@@ -63,7 +63,9 @@ def skills_for_mode(skills: Optional[Skills], mode: str) -> Optional[Skills]:
     """
     if not isinstance(skills, Skills) or mode != MODE_READ:
         return skills
-    return GatedSkills(skills.loaders, allow_scripts=False)
+    if isinstance(skills, PackSkills):
+        return skills.without_scripts()
+    return PackSkills(skills.loaders, member_pack={}, packs=[], allow_scripts=False)
 
 
 def extension_prompt_blocks(registry: Optional[ExtensionRegistry], mode: str, cap: int) -> str:

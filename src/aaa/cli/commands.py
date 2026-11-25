@@ -23,7 +23,7 @@ from ..memory import engine_ids
 from ..memory.agno import read_builtin
 from ..model.catalog import Ambiguous, NotFound, Resolved
 from ..model.provider import API_CLASSES, DEFAULT_API
-from ..plugins import project_dirs, toggle_extension
+from ..plugins import SkillPack, project_dirs, toggle_extension
 from ..sessions import index
 from ..sessions.query import find_session, list_sessions, session_label
 from ..todo_contract import normalize
@@ -1203,36 +1203,64 @@ def _export_command(state: AppState, argument: str) -> None:
 
 # ---------------------------------------------------------------- /plugin 与 /skills
 
+def _set_pack_enabled(pack: SkillPack) -> None:
+    """增删包目录的 `.disabled` 标记；失败时说明原因。"""
+    try:
+        enabled = toggle_extension(pack.path)
+    except OSError as exc:
+        print(f"技能包 {pack.name} 未改动：{sanitize(str(exc))}")
+        return
+    print(f"{GLYPH['ok']} 技能包 {pack.name} 已{'启用' if enabled else '停用'}（重启生效）")
+
+
 def _plugin_command(state: AppState, argument: str) -> None:
-    """查看或启停 MCP 插件；启停写 `.disabled` 标记文件，重启生效。"""
+    """查看或启停 MCP 插件与技能包；重启生效。
+
+    带参数时先匹配 MCP 插件（保持既有用法），再匹配技能包。
+    """
     exts = state.plugin_extensions
+    packs = list(getattr(state, "skill_pack_info", None) or [])
     if argument:
         target = next((e for e in exts if e.name == argument), None)
-        if target is None:
-            print(f"插件不存在：{argument}（目录 ~/.aaa/extensions/<name>/）")
+        if target is not None:
+            enabled = toggle_extension(target.path)
+            print(f"{GLYPH['ok']} 插件 {target.name} 已{'启用' if enabled else '停用'}（重启生效）")
             return
-        enabled = toggle_extension(target.path)
-        print(f"{GLYPH['ok']} 插件 {target.name} 已{'启用' if enabled else '停用'}（重启生效）")
+        pack = next((p for p in packs if p.name == argument), None)
+        if pack is not None:
+            _set_pack_enabled(pack)
+            return
+        print(f"插件或技能包不存在：{argument}"
+              "（插件在 ~/.aaa/extensions/<name>/extension.toml；技能包是技能根下的分组目录）")
         return
-    if not exts:
-        print("没有发现插件。把插件放到 ~/.aaa/extensions/<name>/extension.toml（[mcp] 段）。")
+    if not exts and not packs:
+        print("没有发现插件或技能包。插件放在 ~/.aaa/extensions/<name>/extension.toml（[mcp] 段）；"
+              "技能根下建分组目录（内放技能，附 PACK.md 描述）即成包。")
         return
     picked = _menu(
         state,
-        "选择插件（回车切换启停，重启生效）",
+        "选择插件或技能包（回车切换启停，重启生效）",
         [
             picker.Item(
-                e,
-                f"{'●' if e.enabled else '○'} {e.name} {_source_tag(e)}",
-                "mcp",
+                p,
+                f"{'●' if p.enabled else '○'} {p.name} · {len(p.members)} 个技能"
+                + (f" · {p.description[:40]}" if p.description else "")
+                + " [技能包]",
             )
+            for p in packs
+        ] + [
+            picker.Item(e, f"{'●' if e.enabled else '○'} {e.name} {_source_tag(e)}", "mcp")
             for e in exts
         ],
         subtitle="Esc 取消",
     )
-    if picked not in (picker.BACK, picker.ABORT):
-        enabled = toggle_extension(picked.path)
-        print(f"{GLYPH['ok']} 插件 {picked.name} 已{'启用' if enabled else '停用'}（重启生效）")
+    if picked in (picker.BACK, picker.ABORT):
+        return
+    if isinstance(picked, SkillPack):
+        _set_pack_enabled(picked)
+        return
+    enabled = toggle_extension(picked.path)
+    print(f"{GLYPH['ok']} 插件 {picked.name} 已{'启用' if enabled else '停用'}（重启生效）")
 
 
 # ---------------------------------------------------------------- /skills
@@ -1252,17 +1280,20 @@ def _skills_command(state: AppState) -> None:
         emit(state, "没有发现技能。技能放在 ~/.agents/skills/<name>/SKILL.md 或仓库 .aaa/skills/<name>/SKILL.md。")
         return
     sources = getattr(state, "skill_sources", {}) or {}
+    packs = getattr(state, "skill_packs", {}) or {}
     rank = {"project": 0, "user": 1, "builtin": 2}
     skills = sorted(
         bundle.get_all_skills(),
-        key=lambda s: (rank.get(sources.get(s.name, "builtin"), 3), s.name),
+        key=lambda s: (rank.get(sources.get(s.name, "builtin"), 3), packs.get(s.name, ""), s.name),
     )
     emit(state, f"发现 {len(skills)} 个技能", "bold")
     emit(state)
     for skill in skills:
         source = sources.get(str(skill.name), "builtin")
         desc = str(skill.description or "").splitlines()[0] if skill.description else ""
-        emit(state, f"  {skill.name} [{_SOURCE_LABELS.get(source, source)}]", "")
+        pack = packs.get(str(skill.name))
+        pack_tag = f" [{pack}]" if pack else ""
+        emit(state, f"  {skill.name} [{_SOURCE_LABELS.get(source, source)}]{pack_tag}", "")
         emit(state, f"      {desc}", "class:picker.hint")
 
 
