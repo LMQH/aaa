@@ -138,7 +138,7 @@ P2 实现在 `tests/pty_cases.py`，由 `e2e.py --pty` 导入。
 
 ## 清理
 
-每个用例的 `HOME` 与工作目录建在系统临时目录下，脚本不删除（删除受团队策略限制，需人工确认清单后处理）。`~/.aaa/data/sessions.db` 不被脚本写入。
+每次运行在系统临时目录下建一个根（`aaa-e2e-run-*`），用例的 `HOME` 与工作目录都建在其下；跑完即删。有失败或带 `--keep-temp` 时保留并打印路径，便于排查。`~/.aaa/data/sessions.db` 不被脚本写入。
 
 ## 审批后执行
 
@@ -147,4 +147,5 @@ P2 实现在 `tests/pty_cases.py`，由 `e2e.py --pty` 导入。
 .venv/bin/python tests/e2e.py             # P0 + P1
 .venv/bin/python tests/e2e.py --suite p0  # 只跑闭环
 .venv/bin/python tests/e2e.py --pty       # 追加交互面
+.venv/bin/python tests/e2e.py --keep-temp # 保留临时目录（默认跑完删除）
 ```

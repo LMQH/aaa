@@ -9,6 +9,7 @@
 约定：
 - 每个用例独立 `HOME`，配置从真实 `~/.aaa/secret.yaml` 复制后按需改动；
   不写真实会话库。
+- 临时目录跑完即删；有失败或带 `--keep-temp` 时保留并打印路径。
 - 默认保留环境代理（含 `ALL_PROXY`/`all_proxy`），以匹配用户真实网络；
   代理不可用或只想直连时加 `--no-proxy`。
 - 断言只依赖 CLI 的可观察输出、产物文件与 `~/.aaa/logs/aaa.log`。
@@ -21,6 +22,7 @@ import argparse
 import json
 import os
 import random
+import shutil
 import string
 import subprocess
 import sys
@@ -47,6 +49,19 @@ def load_base_config() -> dict:
     import yaml
 
     return yaml.safe_load(REAL_SECRET.read_text(encoding="utf-8"))
+
+
+def default_provider(cfg: dict) -> str:
+    """本次运行真正使用的渠道：默认渠道，缺省时取第一个。"""
+    return (cfg.get("default") or {}).get("provider") or next(iter(cfg["providers"]))
+
+
+def deepseek_channel(cfg: dict) -> dict | None:
+    """P2.12 的向导建 deepseek 协议渠道：取本机第一个可用的 deepseek 渠道。"""
+    for provider in cfg["providers"].values():
+        if provider.get("api") == "deepseek" and provider.get("api_key") and provider.get("base_url"):
+            return provider
+    return None
 
 
 def make_home(config: dict | None = None) -> Path:
@@ -260,7 +275,7 @@ def p05_json_events():
 def p06_bad_key():
     cfg = load_base_config()
     # 坏 key 要落在本次运行真正使用的渠道上：默认渠道，缺省时取第一个。
-    provider = (cfg.get("default") or {}).get("provider") or next(iter(cfg["providers"]))
+    provider = default_provider(cfg)
     cfg["providers"][provider]["api_key"] = "invalid-key"
     home, work = make_home(cfg), Path(tempfile.mkdtemp(prefix="aaa-ws-"))
     code, out, err = run_cli(["-p", "只回复 ok"], home, work, timeout=180)
@@ -357,7 +372,8 @@ def p10_offload():
 @case("P1.7 压缩触发")
 def p07_compaction():
     cfg = load_base_config()
-    for model in cfg["providers"]["tokenhub"]["models"]:
+    # 窗口改在本次运行真正使用的渠道上：默认渠道，缺省时取第一个。
+    for model in cfg["providers"][default_provider(cfg)]["models"]:
         model["context_window"] = 20000  # 阈值 = 20000 − 16384 = 3616，压低成本
     home, work = make_home(cfg), Path(tempfile.mkdtemp(prefix="aaa-ws-"))
     session_id = seed_legacy_session(home, work)
@@ -375,7 +391,7 @@ def p07_compaction():
 @case("P1.8 归档检索（search_compacted_history）")
 def p08_archive_search():
     cfg = load_base_config()
-    for model in cfg["providers"]["tokenhub"]["models"]:
+    for model in cfg["providers"][default_provider(cfg)]["models"]:
         model["context_window"] = 20000
     home, work = make_home(cfg), Path(tempfile.mkdtemp(prefix="aaa-ws-"))
     session_id = seed_legacy_session(home, work)
@@ -445,6 +461,7 @@ def main() -> int:
     parser.add_argument("--pty", action="store_true", help="追加交互面用例（P2）")
     parser.add_argument("--only", default=None, help="只跑用例名包含该子串的用例")
     parser.add_argument("--no-proxy", action="store_true", help="剔除 ALL_PROXY/all_proxy（代理不可用时）")
+    parser.add_argument("--keep-temp", action="store_true", help="保留临时 HOME 与工作目录，便于排查失败")
     args = parser.parse_args()
     global STRIP_PROXY
     STRIP_PROXY = bool(args.no_proxy)
@@ -469,31 +486,46 @@ def main() -> int:
             print("缺少 tiktoken：P1 的压缩用例依赖本地 token 计数，先安装再跑", file=sys.stderr)
             return 2
 
-    suites = [suite for suite, _ in CASES] if args.suite == "all" else [args.suite]
-    for suite in suites:
-        for fn in dict(CASES)[suite]:
-            if args.only and args.only not in fn.case_name:
-                continue
-            print(f"--- {fn.case_name}")
-            fn()
-    if args.pty:
-        from pty_cases import hitl_case, wizard_case
+    root = Path(tempfile.mkdtemp(prefix="aaa-e2e-run-"))
+    tempfile.tempdir = str(root)  # 之后所有临时 HOME 与工作目录都落在本次运行的根下
+    print(f"临时目录：{root}")
+    ok = False
+    try:
+        suites = [suite for suite, _ in CASES] if args.suite == "all" else [args.suite]
+        for suite in suites:
+            for fn in dict(CASES)[suite]:
+                if args.only and args.only not in fn.case_name:
+                    continue
+                print(f"--- {fn.case_name}")
+                fn()
+        if args.pty:
+            from pty_cases import hitl_case, wizard_case
 
-        selected = args.only or ""
-        if not selected or "P2.11" in selected:
-            print("--- P2.11 HITL 真实确认（PTY）")
-            hitl_case(record)
-        if not selected or "P2.12" in selected:
-            print("--- P2.12 /provide 真实向导（PTY）")
-            wizard_case(record, load_base_config()["providers"]["deepseek"]["api_key"])
+            selected = args.only or ""
+            if not selected or "P2.11" in selected:
+                print("--- P2.11 HITL 真实确认（PTY）")
+                hitl_case(record)
+            if not selected or "P2.12" in selected:
+                print("--- P2.12 /provide 真实向导（PTY）")
+                channel = deepseek_channel(load_base_config())
+                if channel is None:
+                    record("P2.12 /provide 真实向导（PTY）", "SKIP", "本机没有 deepseek 协议渠道")
+                else:
+                    wizard_case(record, channel["api_key"])
 
-    failed = [r for r in RESULTS if r[1] == "FAIL"]
-    print("\n=== 汇总 ===")
-    for name, status, detail in RESULTS:
-        print(f"{status:4} {name} — {detail}")
-    print(f"PASS {sum(1 for r in RESULTS if r[1] == 'PASS')} / "
-          f"FAIL {len(failed)} / SKIP {sum(1 for r in RESULTS if r[1] == 'SKIP')}")
-    return 1 if failed else 0
+        failed = [r for r in RESULTS if r[1] == "FAIL"]
+        print("\n=== 汇总 ===")
+        for name, status, detail in RESULTS:
+            print(f"{status:4} {name} — {detail}")
+        print(f"PASS {sum(1 for r in RESULTS if r[1] == 'PASS')} / "
+              f"FAIL {len(failed)} / SKIP {sum(1 for r in RESULTS if r[1] == 'SKIP')}")
+        ok = not failed
+        return 1 if failed else 0
+    finally:
+        if ok and not args.keep_temp:
+            shutil.rmtree(root, ignore_errors=True)
+        else:
+            print(f"临时文件保留在 {root}")
 
 
 if __name__ == "__main__":

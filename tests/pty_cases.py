@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import pty
+import select
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,10 @@ class PtyRepl:
     def wait_for(self, pattern: str, timeout: float = PROMPT_TIMEOUT) -> bool:
         deadline = time.time() + timeout
         while time.time() < deadline:
+            remaining = max(0.0, deadline - time.time())
+            ready, _, _ = select.select([self.master], [], [], remaining)
+            if not ready:
+                return False
             try:
                 chunk = os.read(self.master, 4096).decode("utf-8", "replace")
             except OSError:
